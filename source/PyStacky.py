@@ -316,9 +316,9 @@ class Natives:
         if not isinstance(idx, int):
             idx = -1
         lst = Natives._toPyList(Natives._pop(v))
-        lst.pop(idx)
+        Natives._push(lst.pop(idx))
         Natives._push(Natives._toIntList(lst))
-
+        
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
@@ -365,6 +365,40 @@ class Evaluator:
         self.tokens: list[tuple[str, str]] = []
         self.lex()
     def lex(self):
+        chars = []
+        in_string = False
+        in_comment = False
+        escaped = False
+
+        for char in self.source:
+            if in_comment:
+                if char == '\n':
+                    in_comment = False
+                    chars.append(char)
+                else:
+                    chars.append(' ')
+                continue
+
+            if in_string:
+                chars.append(char)
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+                chars.append(char)
+            elif char == ';':
+                in_comment = True
+                chars.append(' ')
+            else:
+                chars.append(char)
+
+        self.source = ''.join(chars)
         tokens = []
         context = ''
 
