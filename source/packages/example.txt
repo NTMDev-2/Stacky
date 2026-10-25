@@ -1,0 +1,4 @@
+function whoami()
+  pushlocal "I'm in a package!"
+  calllocalnative print
+end
