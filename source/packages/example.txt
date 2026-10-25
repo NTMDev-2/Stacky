@@ -1,4 +1,4 @@
 function whoami()
-  pushlocal "I'm in a package!"
+  pushlocal "Hello, I am a package"
   calllocalnative print
 end
