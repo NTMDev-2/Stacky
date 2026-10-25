@@ -9,7 +9,6 @@ BUTTON_FONT = ("Consolas", 12, "bold")
 
 
 class ListPanel(tk.Frame):
-
     def __init__(self, master, title, justify="left"):
         super().__init__(master, bg="black")
 
@@ -59,8 +58,6 @@ class ListPanel(tk.Frame):
         if lines:
             self.listbox.insert(tk.END, *lines)
         self.listbox.yview_moveto(top)
-
-
 class _Polled:
     _poll_id = None
 
@@ -69,7 +66,6 @@ class _Polled:
             self.refresh()
         finally:
             self._poll_id = self.after(REFRESH_MS, self._poll)
-
     def _stop_polling(self):
         if self._poll_id is not None:
             try:
@@ -77,11 +73,9 @@ class _Polled:
             except tk.TclError:
                 pass
             self._poll_id = None
-
     def destroy(self):
         self._stop_polling()
         super().destroy()
-
 
 class StackViewer(_Polled, tk.Tk):
     def __init__(self, stack, interpreter):
@@ -134,17 +128,14 @@ class StackViewer(_Polled, tk.Tk):
         )
         button.pack(side=tk.LEFT, fill=tk.X, expand=True)
         return button
-
     def refresh(self):
         lines = [f"[{i}]: {value!r}" for i, value in enumerate(reversed(self.stack))]
         self.panel.set_title(f"Global Stack ({len(lines)})")
         self.panel.show(lines)
-
     def set_status(self, text, error=False):
         self.status.config(text=text, fg="#ff6060" if error else "white")
 
     def _do_step(self):
-        """Run one interpreter step. Returns 'ok', 'done' or 'error'."""
         try:
             more = self.interpreter.step()
         except Exception as exc:
@@ -157,13 +148,11 @@ class StackViewer(_Polled, tk.Tk):
             self.set_status("Finished")
             return "done"
         return "ok"
-
     def step(self):
         self.pause()
         if self._do_step() == "ok":
             self.set_status("Paused")
         self.refresh()
-
     def run(self):
         if self.running:
             self.pause()
@@ -174,7 +163,6 @@ class StackViewer(_Polled, tk.Tk):
         self.runButton.config(text="Pause")
         self.set_status("Running...")
         self._run_step()
-
     def _run_step(self):
         self.run_after_id = None
         if not self.running:
@@ -184,13 +172,10 @@ class StackViewer(_Polled, tk.Tk):
         self.refresh()
         if result == "ok":
             self.run_after_id = self.after(RUN_STEP_MS, self._run_step)
-
     def pause(self):
         self.pause_quietly()
         self.runButton.config(text="Run")
-
     def pause_quietly(self):
-        """Stop auto-running without touching widgets (safe during destroy)."""
         self.running = False
         if self.run_after_id is not None:
             try:
@@ -200,7 +185,6 @@ class StackViewer(_Polled, tk.Tk):
             self.run_after_id = None
 
     def _guarded(self, action, done_text):
-        """Pause, run an interpreter action, and report errors in the status bar."""
         self.pause()
         try:
             action()
@@ -209,43 +193,18 @@ class StackViewer(_Polled, tk.Tk):
         else:
             self.set_status(done_text)
         self.refresh()
-
     def reset(self):
         self._guarded(lambda: self.interpreter.rerun(False), "Reset")
-
     def rerun(self):
         self._guarded(self.interpreter.rerun, "Finished")
-
-    def reload(self):
-        self._guarded(self.interpreter.reloadFile, "Reloaded and finished")
-
-    def _guarded(self, action, done_text):
-        """Pause, run an interpreter action, and report errors in the status bar."""
-        self.pause()
-        try:
-            action()
-        except Exception as exc:
-            self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
-        else:
-            self.set_status(done_text)
-        self.refresh()
-
-    def reset(self):
-        self._guarded(lambda: self.interpreter.rerun(False), "Reset")
-
-    def rerun(self):
-        self._guarded(self.interpreter.rerun, "Finished")
-
     def reload(self):
         self._guarded(self.interpreter.reloadFile, "Reloaded and finished")
 
     def close(self):
         self.destroy() 
-
     def destroy(self):
         self.pause_quietly()
         super().destroy()
-
     def _mainloop(self):
         self.root.mainloop()
 
@@ -271,11 +230,9 @@ class LocalsViewer(_Polled, tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self._poll()
-
     @staticmethod
     def _at(seq, index, default):
         return seq[index] if index < len(seq) else default
-
     def refresh(self):
         scopes = list(self.interpreter.scopes_stack)
         frames = list(getattr(self.interpreter, "stack_frames", []))
