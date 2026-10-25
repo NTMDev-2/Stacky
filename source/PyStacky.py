@@ -53,7 +53,6 @@ class Call(Node):
     func: str 
     args: list
 @dataclass
-@dataclass
 class Literal(Node):
     val: object
 @dataclass
@@ -71,6 +70,9 @@ class Condition(Node):
 @dataclass
 class If(Node):
     branches: list
+@dataclass
+class BlockExit(Node):
+    pass
 
 class Program:
     def __init__(self, nodes: list[type[Node]]):
@@ -305,7 +307,7 @@ NATIVES = {
     if not name.startswith('_') and callable(getattr(Natives, name))
 }
 
-KEYWORDS = ['define', 'defineglobal', 'pop', 'push', 'function', 'end', 'call', 'set', 'setglobal', 'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 'calllocalnative']
+KEYWORDS = ['define', 'defineglobal', 'pop', 'push', 'function', 'end', 'call', 'set', 'setglobal', 'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 'calllocalnative', 'exit']
 TOKEN_PATTERN = re.compile(
     r'"(?:\\.|[^"\\])*"'
     r'|\d+(?:\.\d+)?'
@@ -409,6 +411,8 @@ class Evaluator:
             left = Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE'):
             return Literal(f'{tok[0][0]}{{{tok[1]}}}')
+        elif tok[0] == 'KEYWORD' and tok[1] == 'pop':
+            return Pop(None)
         else:
             raise SyntaxError(f"Expected a value, got {tok}")
 
@@ -433,21 +437,15 @@ class Evaluator:
             return Condition(left, op, right)
         return left
     def parseCondition(self):
-        left = self.parseValue()
-        op = self.advance()
+        condition = self.parseValue()
 
-        if op is None or op[0] != 'OPERATOR':
-            raise SyntaxError("Expected a comparison operator")
-
-        if op[1] not in ('==', '!=', '<', '>', '<=', '>='):
-            raise SyntaxError(f"Invalid comparison operator: {op[1]}")
-
-        right = self.parseValue()
+        if not isinstance(condition, (Condition, Pop)):
+            raise TypeError("Expected a comparison condition")
 
         if self.peek() and self.peek()[0] == 'NEWLINE':
             self.advance()
 
-        return Condition(left, op[1], right)
+        return condition
     def parseBlock(self, stopKeywords):
         body = []
 
@@ -573,6 +571,8 @@ class Evaluator:
                 raise SyntaxError("'end' without a matching block")
             elif keywordtok == 'if':
                 return self.parseIf()
+            elif keywordtok == 'exit':
+                return BlockExit()
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR']:
             pass
@@ -711,6 +711,7 @@ class Intepreter:
             self.scopes_stack.append(node.func)
 
             self.stack_frames.append({
+                'type': 'function',
                 "body": func.body,
                 "index": 0,
                 "context": args_as_dict,
@@ -751,25 +752,43 @@ class Intepreter:
         elif isinstance(node, If):
             for condition, body in node.branches:
                 if condition is True or self.evaluate(condition, context):
-                    for statement in body:
-                        self.evaluate(statement, context)
+                    self.stack_frames.append({
+                        'type': 'if',
+                        'body': body,
+                        'index': 0,
+                        'context': context,
+                        'scope': self.scope
+                    })
                     break
+        elif isinstance(node, BlockExit):
+            if not self.stack_frames:
+                raise RuntimeError('Exit without a stackframe')
+            self.finish_frame()
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
 
         self.pos += 1
         return self.nodes[self.pos]
+
+    def finish_frame(self):
+        frame = self.stack_frames.pop()
+        if frame["type"] == "function":
+            LOCAL_VAR_STACK.pop()
+            LOCAL_STACK.pop()
+            self.scopes_stack.pop()
+            self.scope = frame["return_scope"]
+        elif frame["type"] == "if":
+            pass
+        elif frame["type"] == "loop":
+            # TODO
+            pass
     def step(self):
         if self.stack_frames:
             frame = self.stack_frames[-1]
 
             if frame["index"] >= len(frame["body"]):
-                LOCAL_VAR_STACK.pop()
-                LOCAL_STACK.pop()
-                self.scope = frame["return_scope"]
-                self.stack_frames.pop()
-                self.scopes_stack.pop()
+                self.finish_frame()
                 return True
 
             node = frame["body"][frame["index"]]
