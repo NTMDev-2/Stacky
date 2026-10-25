@@ -251,7 +251,7 @@ class Natives:
 
     @staticmethod
     def iterlen(v):
-        Natives._push(list(Natives._pop(v)))
+        Natives._push(Natives._toPyList(Natives._pop(v)))
     @staticmethod
     def getelement(v):
         idx = Natives._pop(v)
@@ -306,6 +306,17 @@ class Natives:
             reverse = False
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(Natives._toIntList(sorted(lst, reverse=reverse)))
+    @staticmethod
+    def iterpop(v):
+        try:
+            idx = Natives._pop(v)
+        except Exception:
+            idx = -1
+        if not isinstance(idx, int):
+            idx = -1
+        lst = Natives._toPyList(Natives._pop(v))
+        lst.pop(idx)
+        Natives._push(Natives._toIntList(lst))
 
 NATIVES = {
     name: getattr(Natives, name)
