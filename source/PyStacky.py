@@ -588,6 +588,7 @@ primitive = (int, str, bool)
 class Intepreter:
     def __init__(self, prog: Program):
         self.prog = prog
+        self.running = False
         self.nodes = prog.nodes
         self.pos = -1
         self.scope = 'GLOBAL'
@@ -766,19 +767,28 @@ class Intepreter:
         while self.step():
             pass
 
+
     def rerun(self, go=True):
         STACK.clear()
         LOCAL_STACK.clear()
         LOCAL_VAR_STACK.clear()
         GLOBAL_VAR.clear()
+        self.stack_frames.clear()
+        self.scopes_stack.clear()
+        self.scope = 'GLOBAL'
         self.pos = -1
         if go:
             self.run()
+    def reloadFile(self):
+        self.prog = Program(Evaluator(fileName).parse())
+        if self.nodes == self.prog.nodes:
+            print('There was no change detected in the reload. Did you save?')
+        self.nodes = self.prog.nodes
+        self.rerun()
 
-intepreter = Intepreter(Program(Evaluator('source').parse()))
+fileName = input('Enter file name: ')
+intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
-root = tk.Tk()
-root.withdraw()
 viewer = StackViewer(STACK, intepreter)
-localsviewer = LocalsViewer(root, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
+localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
 viewer._mainloop()
