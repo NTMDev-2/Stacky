@@ -1,0 +1,7 @@
+Python libraries used:
+
+re (main)
+threading (main)
+dataclasses (main)
+pathlib (main)
+tkinter (gui)
