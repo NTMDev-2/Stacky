@@ -1,2 +1,2 @@
 # Stacky
-Cool stack based coding language
+An interesting stack based language made inside python
