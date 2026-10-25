@@ -324,7 +324,7 @@ FUNCTIONS: dict[str, Function] = {}
 class Evaluator:
     def __init__(self, fileName: str):
         try:
-            with open(BASE_DIR / f'{fileName}.txt', 'r') as f:
+            with open(BASE_DIR / 'scripts' / f'{fileName}.txt', 'r') as f:
                 self.source = f.read()
                 f.close()
         except FileNotFoundError:
