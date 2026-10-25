@@ -1,15 +1,19 @@
-
 import tkinter as tk
 
 
-class StackViewer:
+class StackViewer(tk.Tk):
     def __init__(self, stack, interpreter):
+        super().__init__()
+
+        self.geometry("500x450")
+        self.minsize(400, 300)
+
         self.stack = stack
         self.interpreter = interpreter
         self.running = False
+        self.root = self
 
-        self.root = tk.Tk()
-        self.root.title("Stacky")
+        self.title("Stacky")
 
         self.listbox = tk.Listbox(
             self.root,
@@ -19,7 +23,7 @@ class StackViewer:
             bg='black'
         )
         self.scrollbar = tk.Scrollbar(
-            self.root,
+            self.listbox,
             orient=tk.VERTICAL,
             command=self.listbox.yview
         )
@@ -73,7 +77,7 @@ class StackViewer:
         self.listbox.delete(0, tk.END)
 
         for i, value in enumerate(reversed(self.stack)):
-            self.listbox.insert(tk.END, f"{i}: {value!r}")
+            self.listbox.insert(tk.END, f"[{i}]: {value!r}")
 
             self.listbox.itemconfig(i, foreground='white')
 
@@ -102,5 +106,110 @@ class StackViewer:
     def rerun(self):
         self.interpreter.rerun()
 
-    def mainloop(self):
+    def _mainloop(self):
         self.root.mainloop()
+class LocalsViewer(tk.Toplevel):
+    def __init__(self, root, local_stack, local_var_stack, interpreter):
+        super().__init__(root)
+
+        self.local_stack = local_stack
+        self.local_var_stack = local_var_stack
+        self.interpreter = interpreter
+
+        self.title("Stacky - Locals")
+        self.configure(bg="black")
+
+        self.localvar_frame = tk.Frame(self, bg="black")
+        self.localstack_frame = tk.Frame(self, bg="black")
+
+        self.localvar_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.localstack_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.label_localvar = tk.Label(
+            self.localvar_frame,
+            text="Local Variables Stack",
+            font=("Consolas", 12, "italic", "bold"),
+            fg="black",
+            bg="white"
+        )
+        self.label_localvar.pack(side=tk.TOP, fill=tk.X)
+
+        self.label_localstack = tk.Label(
+            self.localstack_frame,
+            text="Local Stack",
+            font=("Consolas", 12, "italic", "bold"),
+            bg="white",
+            fg="black"
+        )
+        self.label_localstack.pack(side=tk.TOP, fill=tk.X)
+
+        self.listbox_localvarstack = tk.Listbox(
+            self.localvar_frame,
+            font=("Consolas", 12, "bold"),
+            width=30,
+            height=20,
+            bg="black",
+            fg="white",
+            justify="left"
+        )
+
+        self.scrollbar_localvarstack = tk.Scrollbar(
+            self.localvar_frame,
+            orient=tk.VERTICAL,
+            command=self.listbox_localvarstack.yview
+        )
+
+        self.listbox_localvarstack.config(
+            yscrollcommand=self.scrollbar_localvarstack.set
+        )
+
+        self.scrollbar_localvarstack.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox_localvarstack.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.listbox_localstack = tk.Listbox(
+            self.localstack_frame,
+            font=("Consolas", 12, "bold"),
+            width=30,
+            height=20,
+            bg="black",
+            fg="white",
+            justify="right"
+        )
+
+        self.scrollbar_localstack = tk.Scrollbar(
+            self.localstack_frame,
+            orient=tk.VERTICAL,
+            command=self.listbox_localstack.yview
+        )
+
+        self.listbox_localstack.config(
+            yscrollcommand=self.scrollbar_localstack.set
+        )
+
+        self.scrollbar_localstack.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox_localstack.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.refresh()
+    def refresh(self):
+        yview1 = self.listbox_localstack.yview()
+        self.listbox_localstack.delete(0, tk.END)
+
+        for i, value in enumerate(reversed(self.local_stack)):
+            self.listbox_localstack.insert(tk.END, f"[{list(reversed(self.interpreter.scopes_stack))[i]}]: {value!r}")
+
+            self.listbox_localstack.itemconfig(i, foreground='white')
+
+        self.listbox_localstack.yview_moveto(yview1[0])
+
+        
+        yview2 = self.listbox_localvarstack.yview()
+        self.listbox_localvarstack.delete(0, tk.END)
+
+        for i, value in enumerate(reversed(self.local_var_stack)):
+            self.listbox_localvarstack.insert(tk.END, f"[{i}]: {value!r}")
+
+            self.listbox_localvarstack.itemconfig(i, foreground='white')
+
+        self.listbox_localvarstack.yview_moveto(yview2[0])
+
+        self.after(50, self.refresh)
