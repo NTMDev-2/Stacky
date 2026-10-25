@@ -13,9 +13,10 @@ class StackViewer:
 
         self.listbox = tk.Listbox(
             self.root,
-            font=("Consolas", 12),
+            font=("Consolas", 12, 'bold'),
             width=30,
-            height=20
+            height=20,
+            bg='black'
         )
         self.scrollbar = tk.Scrollbar(
             self.root,
@@ -73,6 +74,8 @@ class StackViewer:
 
         for i, value in enumerate(reversed(self.stack)):
             self.listbox.insert(tk.END, f"{i}: {value!r}")
+
+            self.listbox.itemconfig(i, foreground='white')
 
         self.listbox.yview_moveto(yview[0])
 
