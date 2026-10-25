@@ -29,7 +29,7 @@ function is_even(n)
     pushlocal n
     pushlocal 2
     calllocalnative mod
-    if 0 == 0
+    if poplocal == 0
         push true
         exit 2
     end
