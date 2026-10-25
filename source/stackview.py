@@ -1,133 +1,256 @@
 import tkinter as tk
 
+REFRESH_MS = 50
+RUN_STEP_MS = 50
 
-class StackViewer(tk.Tk):
+HEADER_FONT = ("Consolas", 12, "italic", "bold")
+LIST_FONT = ("Consolas", 12, "bold")
+BUTTON_FONT = ("Consolas", 12, "bold")
+
+
+class ListPanel(tk.Frame):
+
+    def __init__(self, master, title, justify="left"):
+        super().__init__(master, bg="black")
+
+        self._title = None
+        self._lines = None
+
+        self.label = tk.Label(
+            self, font=HEADER_FONT, fg="black", bg="white"
+        )
+        self.label.pack(side=tk.TOP, fill=tk.X)
+
+        body = tk.Frame(self, bg="black")
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.listbox = tk.Listbox(
+            body,
+            font=LIST_FONT,
+            bg="black",
+            fg="white",
+            justify=justify,
+            activestyle="none",
+            exportselection=False,
+            highlightthickness=0,
+        )
+        self.scrollbar = tk.Scrollbar(
+            body, orient=tk.VERTICAL, command=self.listbox.yview
+        )
+        self.listbox.config(yscrollcommand=self.scrollbar.set)
+
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.set_title(title)
+
+    def set_title(self, title):
+        if title != self._title:
+            self._title = title
+            self.label.config(text=title)
+
+    def show(self, lines):
+        if lines == self._lines:
+            return
+        self._lines = list(lines)
+
+        top = self.listbox.yview()[0]
+        self.listbox.delete(0, tk.END)
+        if lines:
+            self.listbox.insert(tk.END, *lines)
+        self.listbox.yview_moveto(top)
+
+
+class _Polled:
+    _poll_id = None
+
+    def _poll(self):
+        try:
+            self.refresh()
+        finally:
+            self._poll_id = self.after(REFRESH_MS, self._poll)
+
+    def _stop_polling(self):
+        if self._poll_id is not None:
+            try:
+                self.after_cancel(self._poll_id)
+            except tk.TclError:
+                pass
+            self._poll_id = None
+
+    def destroy(self):
+        self._stop_polling()
+        super().destroy()
+
+
+class StackViewer(_Polled, tk.Tk):
     def __init__(self, stack, interpreter):
         super().__init__()
 
         self.geometry("500x450")
         self.minsize(400, 300)
+        self.title("Stacky")
 
         self.stack = stack
         self.interpreter = interpreter
-        self.running = False
         self.root = self
+        self.running = False
+        self.run_after_id = None
 
-        self.title("Stacky")
+        self.status = tk.Label(
+            self,
+            text="Ready",
+            anchor="w",
+            justify="left",
+            wraplength=480,
+            font=("Consolas", 10),
+            bg="#222222",
+            fg="white",
+        )
+        self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.text_frame = tk.Frame(self, bg="white")
-        self.text_frame.pack(side=tk.TOP,fill=tk.X)
-        self.label = tk.Label(
-            self.text_frame,
-            text="Global Stack",
-            font=("Consolas", 12, "italic", "bold"),
-            fg="black",
-            bg="white"
-        )
-        self.label.pack(side=tk.TOP, fill=tk.X)
+        self.button_frame = tk.Frame(self, bg="white")
+        self.button_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.listbox = tk.Listbox(
-            self.root,
-            font=("Consolas", 12, 'bold'),
-            width=30,
-            height=20,
-            bg='black'
-        )
-        self.scrollbar = tk.Scrollbar(
-            self.listbox,
-            orient=tk.VERTICAL,
-            command=self.listbox.yview
-        )
-        self.listbox.config(yscrollcommand=self.scrollbar.set)
+        self.panel = ListPanel(self, "Global Stack")
+        self.panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.stepButton = tk.Button(
-            self.root,
-            text="Step",
-            font=("Consolas", 12, 'italic'),
-            width=10,
-            command=self.step,
-            bg='yellow'
-        )
-        self.runButton = tk.Button(
-            self.root,
-            text="Run",
-            font=("Consolas", 12, "bold"),
-            width=10,
-            command=self.run,
-            bg='lime',
-        )
-        self.rerunButton = tk.Button(
-            self.root,
-            text="Rerun",
-            font=("Consolas", 12, 'bold'),
-            width=10,
-            command=self.rerun,
-            bg='red'
-        )
-        self.resetButton = tk.Button(
-            self.root,
-            text="Reset",
-            font=("Consolas", 12, 'bold'),
-            width=10,
-            command=lambda: interpreter.rerun(False),
-            bg='red'
-        )
-        self.runButton.pack()
-        self.stepButton.pack()
-        self.resetButton.pack()
-        self.rerunButton.pack()
+        self.runButton = self._make_button("Run", self.run, "lime")
+        self.stepButton = self._make_button("Step", self.step, "yellow")
+        self.resetButton = self._make_button("Reset", self.reset, "red")
+        self.rerunButton = self._make_button("Rerun", self.rerun, "red")
+        self.reloadButton = self._make_button("Reload", self.reload, "yellow")
 
         self.protocol("WM_DELETE_WINDOW", self.close)
-        self.after_id = None
-        self.update()
+        self._poll()
 
-    def update(self):
-        yview = self.listbox.yview()
+    def _make_button(self, text, command, bg):
+        button = tk.Button(
+            self.button_frame,
+            text=text,
+            font=BUTTON_FONT,
+            command=command,
+            bg=bg,
+        )
+        button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        return button
 
-        self.listbox.delete(0, tk.END)
+    def refresh(self):
+        lines = [f"[{i}]: {value!r}" for i, value in enumerate(reversed(self.stack))]
+        self.panel.set_title(f"Global Stack ({len(lines)})")
+        self.panel.show(lines)
 
-        for i, value in enumerate(reversed(self.stack)):
-            self.listbox.insert(tk.END, f"[{i}]: {value!r}")
+    def set_status(self, text, error=False):
+        self.status.config(text=text, fg="#ff6060" if error else "white")
 
-            self.listbox.itemconfig(i, foreground='white')
+    def _do_step(self):
+        """Run one interpreter step. Returns 'ok', 'done' or 'error'."""
+        try:
+            more = self.interpreter.step()
+        except Exception as exc:
+            self.pause()
+            self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
+            return "error"
 
-        self.listbox.yview_moveto(yview[0])
+        if not more:
+            self.pause()
+            self.set_status("Finished")
+            return "done"
+        return "ok"
 
-        self.after_id = self.root.after(50, self.update)
     def step(self):
         self.pause()
-        self.interpreter.step()
+        if self._do_step() == "ok":
+            self.set_status("Paused")
+        self.refresh()
+
     def run(self):
         if self.running:
+            self.pause()
+            self.set_status("Paused")
             return
 
         self.running = True
-        self.run_step()
-    def run_step(self):
+        self.runButton.config(text="Pause")
+        self.set_status("Running...")
+        self._run_step()
+
+    def _run_step(self):
+        self.run_after_id = None
         if not self.running:
             return
 
-        if self.interpreter.step():
-            self.root.after(50, self.run_step)
-        else:
-            self.pause()
+        result = self._do_step()
+        self.refresh()
+        if result == "ok":
+            self.run_after_id = self.after(RUN_STEP_MS, self._run_step)
+
     def pause(self):
+        self.pause_quietly()
+        self.runButton.config(text="Run")
+
+    def pause_quietly(self):
+        """Stop auto-running without touching widgets (safe during destroy)."""
         self.running = False
+        if self.run_after_id is not None:
+            try:
+                self.after_cancel(self.run_after_id)
+            except tk.TclError:
+                pass
+            self.run_after_id = None
+
+    def _guarded(self, action, done_text):
+        """Pause, run an interpreter action, and report errors in the status bar."""
+        self.pause()
+        try:
+            action()
+        except Exception as exc:
+            self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
+        else:
+            self.set_status(done_text)
+        self.refresh()
+
+    def reset(self):
+        self._guarded(lambda: self.interpreter.rerun(False), "Reset")
+
     def rerun(self):
-        self.interpreter.rerun()
+        self._guarded(self.interpreter.rerun, "Finished")
+
+    def reload(self):
+        self._guarded(self.interpreter.reloadFile, "Reloaded and finished")
+
+    def _guarded(self, action, done_text):
+        """Pause, run an interpreter action, and report errors in the status bar."""
+        self.pause()
+        try:
+            action()
+        except Exception as exc:
+            self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
+        else:
+            self.set_status(done_text)
+        self.refresh()
+
+    def reset(self):
+        self._guarded(lambda: self.interpreter.rerun(False), "Reset")
+
+    def rerun(self):
+        self._guarded(self.interpreter.rerun, "Finished")
+
+    def reload(self):
+        self._guarded(self.interpreter.reloadFile, "Reloaded and finished")
 
     def close(self):
-        if self.after_id is not None:
-            self.after_cancel(self.after_id)
-            self.after_id = None
-        self.destroy()
-        raise SystemExit
+        self.destroy() 
+
+    def destroy(self):
+        self.pause_quietly()
+        super().destroy()
+
     def _mainloop(self):
         self.root.mainloop()
-class LocalsViewer(tk.Toplevel):
+
+
+class LocalsViewer(_Polled, tk.Toplevel):
     def __init__(self, root, local_stack, local_var_stack, interpreter):
         super().__init__(root)
 
@@ -136,63 +259,44 @@ class LocalsViewer(tk.Toplevel):
         self.interpreter = interpreter
 
         self.title("Stacky - Locals")
+        self.geometry("420x480")
+        self.minsize(300, 250)
         self.configure(bg="black")
 
-        self.localstack_frame = tk.Frame(self, bg="black")
+        self.stack_panel = ListPanel(self, "Local Stack", justify="right")
+        self.stack_panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.localstack_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.vars_panel = ListPanel(self, "Local Variables")
+        self.vars_panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.label_localstack = tk.Label(
-            self.localstack_frame,
-            text="Local Stack",
-            font=("Consolas", 12, "italic", "bold"),
-            bg="white",
-            fg="black"
-        )
-        self.label_localstack.pack(side=tk.TOP, fill=tk.X)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._poll()
 
-        self.listbox_localstack = tk.Listbox(
-            self.localstack_frame,
-            font=("Consolas", 12, "bold"),
-            width=30,
-            height=20,
-            bg="black",
-            fg="white",
-            justify="right"
-        )
+    @staticmethod
+    def _at(seq, index, default):
+        return seq[index] if index < len(seq) else default
 
-        self.scrollbar_localstack = tk.Scrollbar(
-            self.localstack_frame,
-            orient=tk.VERTICAL,
-            command=self.listbox_localstack.yview
-        )
-
-        self.listbox_localstack.config(
-            yscrollcommand=self.scrollbar_localstack.set
-        )
-
-        self.scrollbar_localstack.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox_localstack.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.after_id = None
-        self.refresh()
-
-    def close(self):
-        if self.after_id is not None:
-            self.after_cancel(self.after_id)
-            self.after_id = None
-
-        self.destroy()
     def refresh(self):
-        yview1 = self.listbox_localstack.yview()
-        self.listbox_localstack.delete(0, tk.END)
+        scopes = list(self.interpreter.scopes_stack)
+        frames = list(getattr(self.interpreter, "stack_frames", []))
 
-        for i, value in enumerate(reversed(self.local_stack)):
-            self.listbox_localstack.insert(tk.END, f"[{list(reversed(self.interpreter.scopes_stack))[i]}]: {value!r}")
+        stack_lines = []
+        var_lines = []
 
-            self.listbox_localstack.itemconfig(i, foreground='white')
+        for i in reversed(range(len(scopes))):
+            name = scopes[i]
 
-        self.listbox_localstack.yview_moveto(yview1[0])
+            stack = self._at(self.local_stack, i, [])
+            stack_lines.append(f"[{name}]: {stack!r}")
 
-        self.after_id = self.after(50, self.refresh)
+            variables = {}
+            frame = self._at(frames, i, None)
+            if frame is not None:
+                variables.update(frame.get("context", {}))
+            variables.update(self._at(self.local_var_stack, i, {}))
+            for var, value in variables.items():
+                var_lines.append(f"[{name}] {var} = {value!r}")
+
+        self.stack_panel.set_title(f"Local Stack ({len(stack_lines)} frames)")
+        self.stack_panel.show(stack_lines)
+        self.vars_panel.show(var_lines)
