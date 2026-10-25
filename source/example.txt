@@ -1,0 +1,6 @@
+function whoami()
+  pushlocal "Hello, I am a function!"
+  calllocalnative print
+end
+
+call whoami
