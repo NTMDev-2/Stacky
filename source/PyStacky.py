@@ -332,7 +332,6 @@ class Evaluator:
         self.pos = 0
         self.tokens: list[tuple[str, str]] = []
         self.lex()
-    
     def lex(self):
         tokens = []
         context = ''
@@ -401,14 +400,38 @@ class Evaluator:
     def parseValue(self):
         tok = self.advance()
 
+        if tok is None:
+            raise SyntaxError("Expected a value, got end of input")
+
         if tok[0] == 'IDENTIFIER':
-            return Variable(tok[1])
+            left = Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
-            return Literal(tok[1])
+            left = Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE'):
             return Literal(f'{tok[0][0]}{{{tok[1]}}}')
+        else:
+            raise SyntaxError(f"Expected a value, got {tok}")
 
-        raise SyntaxError(f"Expected a value, got {tok}")
+        next_tok = self.peek()
+
+        if next_tok and next_tok[0] == 'OPERATOR':
+            op = self.advance()[1]
+            right_tok = self.advance()
+
+            if right_tok is None:
+                raise SyntaxError("Expected a value after comparison operator")
+
+            if right_tok[0] == 'IDENTIFIER':
+                right = Variable(right_tok[1])
+            elif right_tok[0] in ('NUMBER', 'STRING'):
+                right = Literal(right_tok[1])
+            else:
+                raise SyntaxError(
+                    f"Expected a value after comparison operator, got {right_tok}"
+                )
+
+            return Condition(left, op, right)
+        return left
     def parseCondition(self):
         left = self.parseValue()
         op = self.advance()
@@ -551,7 +574,7 @@ class Evaluator:
             elif keywordtok == 'if':
                 return self.parseIf()
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
-        elif tok[0] in ["NUMBER", "STRING"]:
+        elif tok[0] in ["NUMBER", "STRING", 'OPERATOR']:
             pass
         else:
             raise SyntaxError(f"Unexpected token: {tok}")
@@ -582,7 +605,6 @@ GLOBAL_VAR: dict[str, object] = {}
 STACK = []
 LOCAL_VAR_STACK: list[dict[str, object]] = []
 LOCAL_STACK: list[list] = []
-
 
 primitive = (int, str, bool)
 class Intepreter:
@@ -766,7 +788,6 @@ class Intepreter:
     def run(self):
         while self.step():
             pass
-
 
     def rerun(self, go=True):
         STACK.clear()
