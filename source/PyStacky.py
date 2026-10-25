@@ -251,7 +251,8 @@ class Natives:
 
     @staticmethod
     def iterlen(v):
-        Natives._push(Natives._toPyList(Natives._pop(v)))
+        lst = Natives._toPyList(Natives._pop(v))
+        Natives._push(len(lst))
     @staticmethod
     def getelement(v):
         idx = Natives._pop(v)
