@@ -15,6 +15,17 @@ class StackViewer(tk.Tk):
 
         self.title("Stacky")
 
+        self.text_frame = tk.Frame(self, bg="white")
+        self.text_frame.pack(side=tk.TOP,fill=tk.X)
+        self.label = tk.Label(
+            self.text_frame,
+            text="Global Stack",
+            font=("Consolas", 12, "italic", "bold"),
+            fg="black",
+            bg="white"
+        )
+        self.label.pack(side=tk.TOP, fill=tk.X)
+
         self.listbox = tk.Listbox(
             self.root,
             font=("Consolas", 12, 'bold'),
@@ -68,7 +79,9 @@ class StackViewer(tk.Tk):
         self.stepButton.pack()
         self.resetButton.pack()
         self.rerunButton.pack()
-        
+
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.after_id = None
         self.update()
 
     def update(self):
@@ -83,7 +96,7 @@ class StackViewer(tk.Tk):
 
         self.listbox.yview_moveto(yview[0])
 
-        self.root.after(50, self.update)
+        self.after_id = self.root.after(50, self.update)
     def step(self):
         self.pause()
         self.interpreter.step()
@@ -106,6 +119,12 @@ class StackViewer(tk.Tk):
     def rerun(self):
         self.interpreter.rerun()
 
+    def close(self):
+        if self.after_id is not None:
+            self.after_cancel(self.after_id)
+            self.after_id = None
+        self.destroy()
+        raise SystemExit
     def _mainloop(self):
         self.root.mainloop()
 class LocalsViewer(tk.Toplevel):
@@ -119,20 +138,9 @@ class LocalsViewer(tk.Toplevel):
         self.title("Stacky - Locals")
         self.configure(bg="black")
 
-        self.localvar_frame = tk.Frame(self, bg="black")
         self.localstack_frame = tk.Frame(self, bg="black")
 
-        self.localvar_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.localstack_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.label_localvar = tk.Label(
-            self.localvar_frame,
-            text="Local Variables Stack",
-            font=("Consolas", 12, "italic", "bold"),
-            fg="black",
-            bg="white"
-        )
-        self.label_localvar.pack(side=tk.TOP, fill=tk.X)
 
         self.label_localstack = tk.Label(
             self.localstack_frame,
@@ -142,29 +150,6 @@ class LocalsViewer(tk.Toplevel):
             fg="black"
         )
         self.label_localstack.pack(side=tk.TOP, fill=tk.X)
-
-        self.listbox_localvarstack = tk.Listbox(
-            self.localvar_frame,
-            font=("Consolas", 12, "bold"),
-            width=30,
-            height=20,
-            bg="black",
-            fg="white",
-            justify="left"
-        )
-
-        self.scrollbar_localvarstack = tk.Scrollbar(
-            self.localvar_frame,
-            orient=tk.VERTICAL,
-            command=self.listbox_localvarstack.yview
-        )
-
-        self.listbox_localvarstack.config(
-            yscrollcommand=self.scrollbar_localvarstack.set
-        )
-
-        self.scrollbar_localvarstack.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox_localvarstack.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.listbox_localstack = tk.Listbox(
             self.localstack_frame,
@@ -189,7 +174,16 @@ class LocalsViewer(tk.Toplevel):
         self.scrollbar_localstack.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox_localstack.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.after_id = None
         self.refresh()
+
+    def close(self):
+        if self.after_id is not None:
+            self.after_cancel(self.after_id)
+            self.after_id = None
+
+        self.destroy()
     def refresh(self):
         yview1 = self.listbox_localstack.yview()
         self.listbox_localstack.delete(0, tk.END)
@@ -201,15 +195,4 @@ class LocalsViewer(tk.Toplevel):
 
         self.listbox_localstack.yview_moveto(yview1[0])
 
-        
-        yview2 = self.listbox_localvarstack.yview()
-        self.listbox_localvarstack.delete(0, tk.END)
-
-        for i, value in enumerate(reversed(self.local_var_stack)):
-            self.listbox_localvarstack.insert(tk.END, f"[{i}]: {value!r}")
-
-            self.listbox_localvarstack.itemconfig(i, foreground='white')
-
-        self.listbox_localvarstack.yview_moveto(yview2[0])
-
-        self.after(50, self.refresh)
+        self.after_id = self.after(50, self.refresh)
