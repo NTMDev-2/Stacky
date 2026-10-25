@@ -485,6 +485,8 @@ class Evaluator:
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseValue()
                 if keywordtok == 'push':
+                    if isinstance(value, Literal) and str(value.val).startswith(('T{', 'L{')):
+                        return Push(Literal(str(value.val).replace(' ', '')))
                     return Push(value)
                 return PushLocal(value)
             elif keywordtok in ['set', 'setglobal']:
@@ -733,6 +735,7 @@ class Intepreter:
         self.pos = -1
         if go:
             self.run()
+
 
 intepreter = Intepreter(Program(Evaluator('source').parse()))
 viewer = StackViewer(STACK, intepreter)
