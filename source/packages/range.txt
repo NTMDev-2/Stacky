@@ -1,0 +1,21 @@
+function range(mx, step)
+    define x []
+    define itx 0
+    loop
+        pushlocal x
+        pushlocal itx
+        if itx >= mx
+            poplocal
+            poplocal x
+            push x
+            exit 3
+        end
+        calllocalnative iterappend
+        poplocal x
+        
+        pushlocal itx
+        pushlocal step
+        calllocalnative add
+        poplocal itx
+    end
+end
