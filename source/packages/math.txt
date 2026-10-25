@@ -1,0 +1,38 @@
+function double(n)
+    pushlocal n
+    calllocalnative dup
+    calllocalnative add
+    poplocal n
+    push n
+end
+
+function square(n)
+    pushlocal n
+    calllocalnative dup
+    calllocalnative mul
+    poplocal n
+    push n
+end
+
+function is_odd(n)
+    pushlocal n
+    pushlocal 2
+    calllocalnative mod
+    if poplocal == 1
+        push true
+        exit 2
+    end
+    push false
+end
+
+function is_even(n)
+    pushlocal n
+    pushlocal 2
+    calllocalnative mod
+    if 0 == 0
+        push true
+        exit 2
+    end
+    push false
+end
+        
