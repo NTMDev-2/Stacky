@@ -420,46 +420,32 @@ class Evaluator:
     def parseValue(self):
         tok = self.advance()
 
-        if tok is None:
-            raise SyntaxError("Expected a value, got end of input")
-
         if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
             if tok[1] == 'pop':
-                return Pop(None)
-            return PopLocal(None)
-
-        if tok[0] == 'IDENTIFIER':
-            if tok[1].lower() == 'true':
-                return Literal(True)
-            elif tok[1].lower() == 'false':
-                return Literal(False)
+                left = Pop(None)
+            else:
+                left = PopLocal(None)
+        elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false'):
+            if tok[1] == 'true':
+                left = Literal(True)
+            else:
+                left = Literal(False)
+        elif tok[0] == 'IDENTIFIER':
             left = Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
             left = Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE'):
             return Literal(f'{tok[0][0]}{{{tok[1]}}}')
         else:
-            raise SyntaxError(f"Expected a value, got {tok}")
+            raise SyntaxError(f"Unexpected token: {tok}")
 
         next_tok = self.peek()
 
         if next_tok and next_tok[0] == 'OPERATOR':
-            op = self.advance()[1]
-            right_tok = self.advance()
+            operator = self.advance()[1]
+            right = self.parseValue()
+            return Condition(left, operator, right)
 
-            if right_tok is None:
-                raise SyntaxError("Expected a value after comparison operator")
-
-            if right_tok[0] == 'IDENTIFIER':
-                right = Variable(right_tok[1])
-            elif right_tok[0] in ('NUMBER', 'STRING'):
-                right = Literal(right_tok[1])
-            else:
-                raise SyntaxError(
-                    f"Expected a value after comparison operator, got {right_tok}"
-                )
-
-            return Condition(left, op, right)
         return left
     def parseCondition(self):
         condition = self.parseValue()
@@ -820,7 +806,6 @@ class Intepreter:
                     })
                     break
         elif isinstance(node, BlockExit):
-            print('Reached exit')
             if not self.stack_frames:
                 raise RuntimeError('Exit without a stackframe')
             self.finish_frame(node.depth)
@@ -907,5 +892,4 @@ intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
 viewer = StackViewer(STACK, intepreter)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
-print(FUNCTIONS['is_even'].body)
 viewer._mainloop()
