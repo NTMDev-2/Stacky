@@ -72,11 +72,13 @@ class If(Node):
     branches: list
 @dataclass
 class BlockExit(Node):
-    pass
+    depth: int = 1
 @dataclass
 class Loop(Node):
     body: list
-
+@dataclass
+class Import(Node):
+    package: str
 
 class Program:
     def __init__(self, nodes: list[type[Node]]):
@@ -331,13 +333,20 @@ TOKEN_PATTERN = re.compile(
 BASE_DIR = Path(__file__).parent
 
 FUNCTIONS: dict[str, Function] = {}
+IMPORTING_FILES: set[Path] = set()
+IMPORTED_FILES: set[Path] = set()
 
 class Evaluator:
-    def __init__(self, fileName: str):
+    def __init__(self, fileName: str = '', forcePath: Path | None = None):
         try:
-            with open(BASE_DIR / 'scripts' / f'{fileName}.txt', 'r') as f:
-                self.source = f.read()
-                f.close()
+            if not forcePath:
+                with open(BASE_DIR / 'scripts' / f'{fileName}.txt', 'r') as f:
+                    self.source = f.read()
+                    f.close()
+            else:
+                with open(forcePath) as f:
+                    self.source = f.read()
+                    f.close()
         except FileNotFoundError:
             self.source = fileName
         self.pos = 0
@@ -414,14 +423,21 @@ class Evaluator:
         if tok is None:
             raise SyntaxError("Expected a value, got end of input")
 
+        if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
+            if tok[1] == 'pop':
+                return Pop(None)
+            return PopLocal(None)
+
         if tok[0] == 'IDENTIFIER':
+            if tok[1].lower() == 'true':
+                return Literal(True)
+            elif tok[1].lower() == 'false':
+                return Literal(False)
             left = Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
             left = Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE'):
             return Literal(f'{tok[0][0]}{{{tok[1]}}}')
-        elif tok[0] == 'KEYWORD' and tok[1] == 'pop':
-            return Pop(None)
         else:
             raise SyntaxError(f"Expected a value, got {tok}")
 
@@ -448,7 +464,7 @@ class Evaluator:
     def parseCondition(self):
         condition = self.parseValue()
 
-        if not isinstance(condition, (Condition, Pop)):
+        if not isinstance(condition, (Condition, Pop, PopLocal)):
             raise TypeError("Expected a comparison condition")
 
         if self.peek() and self.peek()[0] == 'NEWLINE':
@@ -581,11 +597,41 @@ class Evaluator:
             elif keywordtok == 'if':
                 return self.parseIf()
             elif keywordtok == 'exit':
+                depth = self.parseValue()
+                if isinstance(depth, Literal) and str(depth.val).isnumeric():
+                    return BlockExit(depth.val)
                 return BlockExit()
             elif keywordtok == 'loop':
                 body = self.parseBlock({'end'})
                 self.advance()
                 return Loop(body)
+            elif keywordtok == 'import':
+                module = self.advance()
+                if module is None or module[0] != 'IDENTIFIER':
+                    raise SyntaxError("Expected module name after 'import'")
+                path = (BASE_DIR / 'packages' / f'{module[1]}.txt').resolve()
+                if path in IMPORTING_FILES:
+                    raise ImportError(f"Circular import detected: {module[1]}")
+                if path not in IMPORTED_FILES:
+                    if not path.is_file():
+                        raise FileNotFoundError(
+                            f"Stacky module not found: {path}"
+                        )
+                    IMPORTING_FILES.add(path)
+                    try:
+                        imported_nodes = Evaluator(forcePath=path).parse()
+
+                        for imported_node in imported_nodes:
+                            if not isinstance(imported_node, (Function, Import)):
+                                raise TypeError(
+                                    f"Imported module '{module[1]}' "
+                                    "can only contain function definitions and imports"
+                                )
+                        IMPORTED_FILES.add(path)
+                    finally:
+                        IMPORTING_FILES.remove(path)
+
+                return Import(module[1])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR']:
             pass
@@ -709,8 +755,8 @@ class Intepreter:
                     LOCAL_VAR_STACK[-1][node.varOptional] = LOCAL_STACK[-1].pop()
             else:
                 return LOCAL_STACK[-1].pop()
-        elif isinstance(node, Function):
-            pass 
+        elif isinstance(node, (Function, Import)):
+            return None
         elif isinstance(node, Call):
             func = FUNCTIONS[node.func]
             previous_scope = self.scope
@@ -774,9 +820,10 @@ class Intepreter:
                     })
                     break
         elif isinstance(node, BlockExit):
+            print('Reached exit')
             if not self.stack_frames:
                 raise RuntimeError('Exit without a stackframe')
-            self.finish_frame()
+            self.finish_frame(node.depth)
         elif isinstance(node, Loop):
             self.stack_frames.append({
                 'type': 'loop',
@@ -792,20 +839,21 @@ class Intepreter:
         self.pos += 1
         return self.nodes[self.pos]
 
-    def finish_frame(self):
+    def finish_frame(self, depth: int = 1):
         for i in range(len(self.stack_frames) - 1, -1, -1):
             if self.stack_frames[i]["type"] == "loop":
                 del self.stack_frames[i:]
                 return
-        
-        frame = self.stack_frames.pop()
-        if frame["type"] == "function":
-            LOCAL_VAR_STACK.pop()
-            LOCAL_STACK.pop()
-            self.scopes_stack.pop()
-            self.scope = frame["return_scope"]
-        elif frame["type"] == "if":
-            return
+
+        for _ in range(depth):
+            frame = self.stack_frames.pop()
+            if frame["type"] == "function":
+                LOCAL_VAR_STACK.pop()
+                LOCAL_STACK.pop()
+                self.scopes_stack.pop()
+                self.scope = frame["return_scope"]
+            elif frame["type"] == "if":
+                continue
     def step(self):
         if self.stack_frames:
             frame = self.stack_frames[-1]
@@ -836,6 +884,7 @@ class Intepreter:
             pass
 
     def rerun(self, go=True):
+        global IMPORTED_FILES, IMPORTING_FILES
         STACK.clear()
         LOCAL_STACK.clear()
         LOCAL_VAR_STACK.clear()
@@ -858,4 +907,5 @@ intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
 viewer = StackViewer(STACK, intepreter)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
+print(FUNCTIONS['is_even'].body)
 viewer._mainloop()
