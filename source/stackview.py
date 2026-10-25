@@ -7,7 +7,6 @@ HEADER_FONT = ("Consolas", 12, "italic", "bold")
 LIST_FONT = ("Consolas", 12, "bold")
 BUTTON_FONT = ("Consolas", 12, "bold")
 
-
 class ListPanel(tk.Frame):
     def __init__(self, master, title, justify="left"):
         super().__init__(master, bg="black")
@@ -207,8 +206,6 @@ class StackViewer(_Polled, tk.Tk):
         super().destroy()
     def _mainloop(self):
         self.root.mainloop()
-
-
 class LocalsViewer(_Polled, tk.Toplevel):
     def __init__(self, root, local_stack, local_var_stack, interpreter):
         super().__init__(root)
@@ -252,8 +249,8 @@ class LocalsViewer(_Polled, tk.Toplevel):
                 variables.update(frame.get("context", {}))
             variables.update(self._at(self.local_var_stack, i, {}))
             for var, value in variables.items():
-                var_lines.append(f"[{name}] {var} = {value!r}")
+                var_lines.append(f"[{name}] {var}: {value!r}")
 
-        self.stack_panel.set_title(f"Local Stack ({len(stack_lines)} frames)")
+        self.stack_panel.set_title(f"Local Stack ({len(stack_lines)})")
         self.stack_panel.show(stack_lines)
         self.vars_panel.show(var_lines)
