@@ -334,6 +334,7 @@ class Evaluator:
     
     def lex(self):
         tokens = []
+        context = ''
 
         matches = iter(TOKEN_PATTERN.finditer(self.source))
         skip_until = 0
@@ -346,13 +347,16 @@ class Evaluator:
                 depth = 1
                 pos = match.end()
 
+                if context == 'funcdef':
+                    tokens.append(('PUNCTUATION', value))
+                    continue
+                
                 while pos < len(self.source) and depth > 0:
                     if self.source[pos] == value:
                         depth += 1
                     elif self.source[pos] == (']' if value == '[' else ')'):
                         depth -= 1
                     pos += 1
-
                 if depth != 0:
                     raise SyntaxError(f"Unclosed {'list' if value == '[' else 'tuple'}")
 
@@ -362,6 +366,8 @@ class Evaluator:
             elif value in (" ", "\t"):
                 continue
             elif value == "\n":
+                if context == 'valuedef':
+                    context == ''
                 tokens.append(("NEWLINE", value))
             elif value.startswith('"'):
                 tokens.append(("STRING", value[1:-1]))
@@ -369,6 +375,12 @@ class Evaluator:
                 number = float(value) if "." in value else int(value)
                 tokens.append(("NUMBER", number))
             elif value in KEYWORDS:
+                if value == 'function':
+                    context = 'funcdef'
+                elif value in ['push', 'pop', 'pushlocal', 'poplocal', 'define', 'defineglobal', 'set', 'setglobal']:
+                    context = 'valuedef'
+                elif value == 'end':
+                    context = ''
                 tokens.append(("KEYWORD", value))
             elif value[0].isalpha() or value[0] == "_":
                 tokens.append(("IDENTIFIER", value))
@@ -505,7 +517,6 @@ class Evaluator:
                 return Call(func, args)
             elif keywordtok == 'function':
                 name = self.advance()[1]
-
                 if self.advance()[1] != '(':
                     raise SyntaxError("Expected '(' after function name")
 
@@ -735,7 +746,6 @@ class Intepreter:
         self.pos = -1
         if go:
             self.run()
-
 
 intepreter = Intepreter(Program(Evaluator('source').parse()))
 viewer = StackViewer(STACK, intepreter)
