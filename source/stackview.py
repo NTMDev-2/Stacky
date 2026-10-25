@@ -132,7 +132,7 @@ class StackViewer(_Polled, tk.Tk):
         self.panel.set_title(f"Global Stack ({len(lines)})")
         self.panel.show(lines)
     def set_status(self, text, error=False):
-        self.status.config(text=text, fg="#ff6060" if error else "white")
+        self.status.config(text=text, fg="#ff0000" if error else "white")
 
     def _do_step(self):
         try:
@@ -219,10 +219,10 @@ class LocalsViewer(_Polled, tk.Toplevel):
         self.minsize(300, 250)
         self.configure(bg="black")
 
-        self.stack_panel = ListPanel(self, "Local Stack", justify="right")
+        self.stack_panel = ListPanel(self, "Local Stack", justify="left")
         self.stack_panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.vars_panel = ListPanel(self, "Local Variables")
+        self.vars_panel = ListPanel(self, "Local Variables", justify='left')
         self.vars_panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
