@@ -1,0 +1,19 @@
+function unpack(itx)
+    pushlocal itx
+    loop
+        calllocalnative dup
+        pushlocal 0
+        calllocalnative getelement
+        push poplocal
+
+        pushlocal 0
+        calllocalnative delelement
+
+        calllocalnative dup
+        calllocalnative iterlen
+
+        if poplocal == 0
+            exit 3
+        end 
+    end
+end
