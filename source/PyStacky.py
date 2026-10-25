@@ -1,9 +1,10 @@
 import re
 import threading
+import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 
-from stackview import StackViewer
+from stackview import LocalsViewer, StackViewer
 
 
 class Node:
@@ -582,6 +583,7 @@ STACK = []
 LOCAL_VAR_STACK: list[dict[str, object]] = []
 LOCAL_STACK: list[list] = []
 
+
 primitive = (int, str, bool)
 class Intepreter:
     def __init__(self, prog: Program):
@@ -589,6 +591,9 @@ class Intepreter:
         self.nodes = prog.nodes
         self.pos = -1
         self.scope = 'GLOBAL'
+        self.scopes_stack: list[str] = []
+
+        self.stack_frames: list[dict] = []
 
     def getVar(self, name, context=None):
         if context is None:
@@ -674,17 +679,23 @@ class Intepreter:
             func = FUNCTIONS[node.func]
             previous_scope = self.scope
 
+            args_as_dict = dict(
+                zip(func.args, (self.evaluate(arg, context) for arg in node.args))
+            )
+
             LOCAL_VAR_STACK.append({})
             LOCAL_STACK.append([])
+            self.scopes_stack.append(node.func)
+
+            self.stack_frames.append({
+                "body": func.body,
+                "index": 0,
+                "context": args_as_dict,
+                "scope": node.func,
+                "return_scope": previous_scope,
+            })
+
             self.scope = node.func
-            try:
-                argsAsZip = dict(zip(func.args, (self.evaluate(arg, context) for arg in node.args)))
-                for _node in func.body:
-                    self.evaluate(_node, argsAsZip)
-            finally:
-                LOCAL_VAR_STACK.pop()
-                LOCAL_STACK.pop()
-                self.scope = previous_scope
         elif isinstance(node, InvokeNative):
             if node.name not in NATIVES:
                 raise NameError(f'The native function, {node.name}, does not exist')
@@ -727,6 +738,23 @@ class Intepreter:
         self.pos += 1
         return self.nodes[self.pos]
     def step(self):
+        if self.stack_frames:
+            frame = self.stack_frames[-1]
+
+            if frame["index"] >= len(frame["body"]):
+                LOCAL_VAR_STACK.pop()
+                LOCAL_STACK.pop()
+                self.scope = frame["return_scope"]
+                self.stack_frames.pop()
+                self.scopes_stack.pop()
+                return True
+
+            node = frame["body"][frame["index"]]
+            frame["index"] += 1
+
+            self.scope = frame["scope"]
+            self.evaluate(node, frame["context"])
+            return True
         node = self.advance()
 
         if node is None:
@@ -748,5 +776,9 @@ class Intepreter:
             self.run()
 
 intepreter = Intepreter(Program(Evaluator('source').parse()))
+
+root = tk.Tk()
+root.withdraw()
 viewer = StackViewer(STACK, intepreter)
-viewer.mainloop()
+localsviewer = LocalsViewer(root, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
+viewer._mainloop()
