@@ -29,3 +29,10 @@ function iterpack(depth, type)
         end
     end
 end
+
+function iterpackall(type)
+    define x 0
+    callnative depth
+    poplocal x
+    call iterpack x type
+end
