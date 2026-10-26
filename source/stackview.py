@@ -1,7 +1,7 @@
 import tkinter as tk
 
-REFRESH_MS = 50
-RUN_STEP_MS = 50
+REFRESH_MS = 20
+RUN_STEP_MS = 20
 
 HEADER_FONT = ("Consolas", 12, "italic", "bold")
 LIST_FONT = ("Consolas", 12, "bold")
