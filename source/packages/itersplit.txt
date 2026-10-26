@@ -1,0 +1,54 @@
+function itersplit(itx, size, type)
+    if size <= 0
+        pushlocal "Cannot split an iterable with a non-positive group size"
+        calllocalnative print
+        exit 2
+    end
+
+    define x []
+    define idx 0
+    define length 0
+
+    pushlocal itx
+    calllocalnative iterlen
+    poplocal length
+
+    loop
+        if idx == length
+            pushlocal x
+            calllocalnative iterlen
+            if poplocal > 0
+                if type == "T"
+                    pushlocal x
+                    calllocalnative totuple
+                    poplocal x
+                end
+                push x
+            end
+            exit 4
+        end
+
+        pushlocal x
+        pushlocal itx
+        pushlocal idx
+        calllocalnative getelement
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal x
+        calllocalnative iterlen
+        if poplocal == size
+            if type == "T"
+                pushlocal x
+                calllocalnative totuple
+                poplocal x
+            end
+            push x
+            set x []
+        end
+
+        pushlocal idx
+        calllocalnative inc
+        poplocal idx
+    end
+end
