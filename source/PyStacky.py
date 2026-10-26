@@ -321,7 +321,12 @@ class Natives:
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(lst.pop(idx))
         Natives._push(Natives._toIntList(lst))
-        
+
+    @staticmethod
+    def totuple(v):
+        lst = Natives._toPyList(Natives._pop(v))
+        Natives._push(Natives._toIntList(tuple(lst)))
+
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
