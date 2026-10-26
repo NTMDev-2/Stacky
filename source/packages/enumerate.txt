@@ -1,0 +1,35 @@
+function enumerate(itx)
+    define x []
+    define p 0
+
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+        if p >= poplocal
+            exit 3
+        end
+
+        pushlocal x
+        pushlocal p
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal itx
+        pushlocal p 
+        calllocalnative getelement
+        
+        pushlocal x
+        calllocalnative swap
+
+        calllocalnative iterappend
+
+        poplocal x
+        push x
+        set x []
+
+        pushlocal p
+        calllocalnative inc
+        poplocal p
+    end
+end
+
