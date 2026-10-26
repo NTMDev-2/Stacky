@@ -25,3 +25,10 @@ function arith_div(a, b)
     calllocalnative div
     push poplocal
 end
+
+function arith_intdiv(a, b)
+    pushlocal a
+    pushlocal b
+    calllocalnative intdiv
+    push poplocal
+end
