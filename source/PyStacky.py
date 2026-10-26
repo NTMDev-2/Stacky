@@ -326,6 +326,11 @@ class Natives:
     def totuple(v):
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(Natives._toIntList(tuple(lst)))
+    @staticmethod
+    def tolist(v):
+        lst = Natives._toPyList(Natives._pop(v))
+        Natives._push(Natives._toIntList(list(lst)))
+
 
 NATIVES = {
     name: getattr(Natives, name)
@@ -879,20 +884,20 @@ class Intepreter:
         return self.nodes[self.pos]
 
     def finish_frame(self, depth: int = 1):
-        for i in range(len(self.stack_frames) - 1, -1, -1):
-            if self.stack_frames[i]["type"] == "loop":
-                del self.stack_frames[i:]
-                return
+        if depth < 1:
+            raise ValueError("Exit depth must be at least 1")
 
         for _ in range(depth):
+            if not self.stack_frames:
+                return
+
             frame = self.stack_frames.pop()
+
             if frame["type"] == "function":
                 LOCAL_VAR_STACK.pop()
                 LOCAL_STACK.pop()
                 self.scopes_stack.pop()
                 self.scope = frame["return_scope"]
-            elif frame["type"] == "if":
-                continue
     def step(self):
         if self.stack_frames:
             frame = self.stack_frames[-1]
