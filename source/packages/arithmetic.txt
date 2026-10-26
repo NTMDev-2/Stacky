@@ -1,0 +1,27 @@
+function arith_add(a, b)
+    pushlocal a
+    pushlocal b
+    calllocalnative add
+    push poplocal
+end
+
+function arith_sub(a, b)
+    pushlocal a
+    pushlocal b
+    calllocalnative sub
+    push poplocal
+end
+
+function arith_mul(a, b)
+    pushlocal a
+    pushlocal b
+    calllocalnative mul
+    push poplocal
+end
+
+function arith_div(a, b)
+    pushlocal a
+    pushlocal b
+    calllocalnative div
+    push poplocal
+end
