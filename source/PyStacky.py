@@ -129,9 +129,14 @@ class Natives:
     @staticmethod
     def _toIntList(value: list | tuple):
         prefix = 'L' if isinstance(value, list) else 'T'
-        return f"{prefix}{{{','.join(map(str, value))}}}"
 
+        def serialize(item):
+            if isinstance(item, (list, tuple)):
+                return Natives._toIntList(item)
+            return str(item)
 
+        return f"{prefix}{{{','.join(serialize(item) for item in value)}}}"
+    
     @staticmethod
     def add(v):
         a = Natives._pop(v)
@@ -321,6 +326,11 @@ class Natives:
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(lst.pop(idx))
         Natives._push(Natives._toIntList(lst))
+    @staticmethod
+    def itercontains(v):
+        val = Natives._pop(v)
+        lst = Natives._toPyList(Natives._pop(v))
+        Natives._push(lst.find(val))
 
     @staticmethod
     def totuple(v):
