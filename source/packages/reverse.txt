@@ -1,0 +1,20 @@
+function reverse(itx)
+    define x []
+    loop
+        pushlocal x
+
+        pushlocal itx
+        calllocalnative iterpop
+        poplocal itx
+        
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal itx
+        calllocalnative iterlen
+        if poplocal == 0
+            push x
+            exit 3
+        end
+    end
+end
