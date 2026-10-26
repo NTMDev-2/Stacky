@@ -209,6 +209,7 @@ class StackViewer(_Polled, tk.Tk):
 class LocalsViewer(_Polled, tk.Toplevel):
     def __init__(self, root, local_stack, local_var_stack, interpreter):
         super().__init__(root)
+        self.attributes("-topmost", False)
 
         self.local_stack = local_stack
         self.local_var_stack = local_var_stack
