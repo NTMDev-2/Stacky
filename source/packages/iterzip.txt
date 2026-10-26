@@ -1,0 +1,56 @@
+function iterzip(itx1, itx2)
+    define x []
+    define t []
+    define p 0
+
+    loop
+        pushlocal p
+        pushlocal itx1
+        calllocalnative iterlen
+
+        if p >= poplocal
+            pushlocal x
+            push x
+            exit 3
+        end
+
+        pushlocal p
+        pushlocal itx2
+        calllocalnative iterlen
+
+        if p >= poplocal
+            pushlocal x
+            push x
+            exit 3
+        end
+
+        pushlocal itx2
+        pushlocal p
+        calllocalnative getelement
+
+        pushlocal itx1
+        pushlocal p
+        calllocalnative getelement
+
+        pushlocal t
+        calllocalnative iterclear
+
+        calllocalnative swap
+        calllocalnative iterappend
+        poplocal t
+
+        pushlocal t
+        calllocalnative swap
+        calllocalnative iterappend
+        poplocal t
+
+        pushlocal x
+        pushlocal t
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal p
+        calllocalnative inc
+        poplocal p
+    end
+end
