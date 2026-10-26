@@ -314,6 +314,7 @@ class Natives:
         except Exception:
             idx = -1
         if not isinstance(idx, int):
+            Natives._push(idx)
             idx = -1
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(lst.pop(idx))
