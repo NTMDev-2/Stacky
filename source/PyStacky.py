@@ -278,6 +278,8 @@ class Natives:
     @staticmethod
     def iterappend(v):
         val = Natives._pop(v)
+        if isinstance(val, str) and val.startswith(('T{', 'L{')):
+            val = Natives._toPyList(val)
         lst = Natives._toPyList(Natives._pop(v))
         lst.append(val)
         Natives._push(Natives._toIntList(lst))
