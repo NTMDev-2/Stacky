@@ -642,7 +642,10 @@ class Evaluator:
             elif keywordtok == 'if':
                 return self.parseIf()
             elif keywordtok == 'exit':
-                depth = self.parseValue()
+                try:
+                    depth = self.parseValue()
+                except SyntaxError:
+                    depth = 1
                 if isinstance(depth, Literal) and str(depth.val).isnumeric():
                     return BlockExit(depth.val)
                 return BlockExit()
