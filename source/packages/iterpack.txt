@@ -33,6 +33,6 @@ end
 function iterpackall(type)
     define x 0
     callnative depth
-    poplocal x
+    pop x
     call iterpack x type
 end
