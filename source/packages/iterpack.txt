@@ -1,10 +1,10 @@
-function iterpack(depth)
+function iterpack(depth, type)
     if depth < 0
         pushlocal "Cannot pack a negative amount of items into an iterable"
         calllocalnative print
         exit 2
     end
-    
+
     define x []
     pushlocal depth
     loop
@@ -17,7 +17,14 @@ function iterpack(depth)
         calllocalnative dup
 
         if poplocal == 0
-            push x
+            if type == "T"
+                pushlocal x
+                calllocalnative totuple
+                poplocal x
+                push x
+            elif type == "L"
+                push x
+            end
             exit 3
         end
     end
