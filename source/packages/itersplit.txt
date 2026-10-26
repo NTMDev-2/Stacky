@@ -25,7 +25,7 @@ function itersplit(itx, size, type)
                 end
                 push x
             end
-            exit 4
+            exit 3
         end
 
         pushlocal x
