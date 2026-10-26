@@ -52,3 +52,8 @@ function itersplit(itx, size, type)
         poplocal idx
     end
 end
+
+import iterpack
+function packitersplit(itx, size, type)
+    call itersplit itx size type
+    call iterpackall type
