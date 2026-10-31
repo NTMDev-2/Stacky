@@ -1023,7 +1023,10 @@ class Intepreter:
             if not self.stack_frames:
                 return
 
-            frame = self.stack_frames.pop()
+            try:
+                frame = self.stack_frames.pop()
+            except IndexError:
+                break
 
             if frame["type"] == "function":
                 LOCAL_VAR_STACK.pop()
