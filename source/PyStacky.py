@@ -133,6 +133,10 @@ class Natives:
         def serialize(item):
             if isinstance(item, (list, tuple)):
                 return Natives._toIntList(item)
+
+            if isinstance(item, str):
+                return '"' + item.replace('\\', '\\\\').replace('"', '') + '"'
+
             return str(item)
 
         return f"{prefix}{{{','.join(serialize(item) for item in value)}}}"
@@ -392,7 +396,7 @@ class Evaluator:
                 with open(forcePath) as f:
                     self.source = f.read()
                     f.close()
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             self.source = fileName
         self.pos = 0
         self.tokens: list[tuple[str, str]] = []
