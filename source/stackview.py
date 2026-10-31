@@ -1,7 +1,7 @@
 import tkinter as tk
 
-REFRESH_MS = 20
-RUN_STEP_MS = 20
+REFRESH_MS = 5
+RUN_STEP_MS = 5
 
 HEADER_FONT = ("Consolas", 12, "italic", "bold")
 LIST_FONT = ("Consolas", 12, "bold")
@@ -242,7 +242,8 @@ class LocalsViewer(_Polled, tk.Toplevel):
             name = scopes[i]
 
             stack = self._at(self.local_stack, i, [])
-            stack_lines.append(f"[{name}]: {stack!r}")
+            for i, v in enumerate(stack):
+                stack_lines.append(f"[{name}]: [{i}]: {v!r}")
 
             variables = {}
             frame = self._at(frames, i, None)
