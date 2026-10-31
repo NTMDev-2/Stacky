@@ -240,7 +240,7 @@ class Natives:
         Natives._push(Natives._pop(v) - 1)
 
     @staticmethod
-    def concat(v):
+    def strconcat(v):
         a = Natives._pop(v)
         b = Natives._pop(v)
         Natives._push(str(b) + str(a))
