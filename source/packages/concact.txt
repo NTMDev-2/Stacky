@@ -1,0 +1,13 @@
+function iterconcat(itx1, itx2)
+    pushlocal itx1
+    pushlocal itx2
+    calllocalnative iterextend
+    push poplocal
+end
+
+function strconcat(str1, str2)
+    pushlocal str1
+    pushlocal str2
+    calllocalnative strconcat
+    push poplocal
+end
