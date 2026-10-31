@@ -6,7 +6,6 @@ function iterunique(itx)
     define found false
 
     loop
-        pushlocal i
         pushlocal itx
         calllocalnative iterlen
         if i >= poplocal
@@ -27,7 +26,6 @@ function iterunique(itx)
             calllocalnative iterappend
             poplocal result
         end
-
 
         pushlocal i
         calllocalnative inc
