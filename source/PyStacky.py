@@ -341,6 +341,10 @@ class Natives:
         lst = Natives._toPyList(Natives._pop(v))
         Natives._push(Natives._toIntList(list(lst)))
 
+    @staticmethod 
+    def dump(v):
+        for i in STACK:
+            print(i)
 
 NATIVES = {
     name: getattr(Natives, name)
