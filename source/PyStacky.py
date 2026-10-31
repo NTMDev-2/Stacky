@@ -83,9 +83,98 @@ class Import(Node):
 class Program:
     def __init__(self, nodes: list[type[Node]]):
         self.nodes = nodes
+class Ref(str):
+    """A reference inside collections"""
+
+class _CollectionReader:
+    NUMBER = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?')
+    IDENT = re.compile(r'[A-Za-z_]\w*')
+    CLOSERS = {'[': ']', '(': ')', '{': '}'}
+    KINDS = {'[': list, '(': tuple, '{': dict, 'L': list, 'T': tuple, 'M': dict}
+    ESCAPES = {'n': '\n', 't': '\t', '\\': '\\', '"': '"'}
+
+    def __init__(self, text: str):
+        self.text = text
+        self.pos = 0
+    def error(self, msg):
+        return ValueError(f"{msg} at position {self.pos} in {self.text!r}")
+    def peek(self):
+        while self.pos < len(self.text) and self.text[self.pos].isspace():
+            self.pos += 1
+        return self.text[self.pos] if self.pos < len(self.text) else ''
+    def readDocument(self):
+        value = self.readValue()
+        if self.peek():
+            raise self.error('Unexpected trailing text')
+        return value
+    def readValue(self):
+        ch = self.peek()
+        if not ch:
+            raise self.error('Unexpected end of collection')
+        if ch == '"':
+            return self.readString()
+        if ch in self.CLOSERS:
+            self.pos += 1
+            return self.readItems(self.KINDS[ch], self.CLOSERS[ch])
+        if ch in 'LTM' and self.text.startswith('{', self.pos + 1):
+            self.pos += 2
+            return self.readItems(self.KINDS[ch], '}')
+
+        match = self.NUMBER.match(self.text, self.pos)
+        if match:
+            self.pos = match.end()
+            raw = match.group()
+            return float(raw) if any(c in raw for c in '.eE') else int(raw)
+
+        match = self.IDENT.match(self.text, self.pos)
+        if match:
+            self.pos = match.end()
+            name = match.group()
+            if name.lower() in ('true', 'false'):
+                return name.lower() == 'true'
+            return Ref(name)
+
+        raise self.error(f'Unexpected character {ch!r}')
+    def readString(self):
+        self.pos += 1  # opening quote
+        out = []
+        while self.pos < len(self.text):
+            ch = self.text[self.pos]
+            self.pos += 1
+            if ch == '"':
+                return ''.join(out)
+            if ch == '\\' and self.pos < len(self.text):
+                nxt = self.text[self.pos]
+                self.pos += 1
+                out.append(self.ESCAPES.get(nxt, '\\' + nxt))
+            else:
+                out.append(ch)
+        raise self.error('Unterminated string')
+    def readItems(self, kind, closer):
+        items = []
+        while self.peek() != closer:
+            if kind is dict:
+                key = self.readValue()
+                if self.peek() != ':':
+                    raise self.error("Expected ':' after map key")
+                self.pos += 1
+                items.append((key, self.readValue()))
+            else:
+                items.append(self.readValue())
+
+            nxt = self.peek()
+            if nxt == ',':
+                self.pos += 1
+            elif nxt != closer:
+                raise self.error(f"Expected ',' or {closer!r}")
+        self.pos += 1  # closer
+        try:
+            return kind(items)
+        except TypeError:
+            raise self.error('Unhashable map key')
 class Natives:
     local = False
-
+       
     @staticmethod
     def _getStack():
         return LOCAL_STACK[-1] if Natives.local else STACK
@@ -96,51 +185,56 @@ class Natives:
     def _push(value):
         Natives._getStack().append(value)
     @staticmethod
-    def _toPyList(value: str):
-        if isinstance(value, (list, tuple)):
+    def _toPyIter(value):
+        if isinstance(value, (list, tuple, dict)):
             return value
-
-        if value.startswith(('L{', 'T{')):
-            content = value[2:-1]
-            result = []
-            depth = 0
-            in_string = False
-            start = 0
-            for i, char in enumerate(content):
-                if char == '"':
-                    in_string = not in_string
-                elif not in_string:
-                    if char in '[{(':
-                        depth += 1
-                    elif char in ']})':
-                        depth -= 1
-                    elif char == ',' and depth == 0:
-                        item = content[start:i].strip()
-                        if item:
-                            result.append(item)
-                        start = i + 1
-            item = content[start:].strip()
-            if item:
-                result.append(item)
-
-            return result if value.startswith('L{') else tuple(result)
-
+        if isinstance(value, str) and value.strip().startswith(('L{', 'T{', 'M{')):
+            return _CollectionReader(value).readDocument()
         raise ValueError(f"Invalid collection: {value!r}")
+
     @staticmethod
-    def _toIntList(value: list | tuple):
-        prefix = 'L' if isinstance(value, list) else 'T'
+    def _encode(item):
+        if isinstance(item, (list, tuple, dict)):
+            return Natives._toIntIter(item)
+        if isinstance(item, bool):
+            return 'true' if item else 'false'
+        if isinstance(item, Ref):
+            return str.__str__(item)
+        if isinstance(item, str):
+            escaped = (item.replace('\\', '\\\\').replace('"', '\\"')
+                           .replace('\n', '\\n').replace('\t', '\\t'))
+            return f'"{escaped}"'
+        if isinstance(item, float):
+            return repr(item)
+        return str(item)
+    @staticmethod
+    def _toIntIter(value):
+        if isinstance(value, list):
+            prefix, items = 'L', [Natives._encode(i) for i in value]
+        elif isinstance(value, tuple):
+            prefix, items = 'T', [Natives._encode(i) for i in value]
+        elif isinstance(value, dict):
+            prefix = 'M'
+            items = [f'{Natives._encode(k)}:{Natives._encode(v)}' for k, v in value.items()]
+        else:
+            raise TypeError(f"Cannot serialize {type(value).__name__} as a collection")
+        return f"{prefix}{{{','.join(items)}}}"
+    @staticmethod
+    def _coerce(value):
+        if isinstance(value, str) and value.startswith(('L{', 'T{', 'M{')) and value.endswith('}'):
+            try:
+                return Natives._toPyIter(value)
+            except ValueError:
+                pass
+        return value
+    @staticmethod
+    def _pushElement(v, element):
+        if isinstance(element, Ref):
+            element = v.getVar(str.__str__(element))
+        if isinstance(element, (list, tuple, dict)):
+            element = Natives._toIntIter(element)
+        Natives._push(element)
 
-        def serialize(item):
-            if isinstance(item, (list, tuple)):
-                return Natives._toIntList(item)
-
-            if isinstance(item, str):
-                return '"' + item.replace('\\', '\\\\').replace('"', '') + '"'
-
-            return str(item)
-
-        return f"{prefix}{{{','.join(serialize(item) for item in value)}}}"
-    
     @staticmethod
     def add(v):
         a = Natives._pop(v)
@@ -265,64 +359,52 @@ class Natives:
 
     @staticmethod
     def iterlen(v):
-        lst = Natives._toPyList(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         Natives._push(len(lst))
     @staticmethod
     def getelement(v):
         idx = Natives._pop(v)
-        lst = Natives._toPyList(Natives._pop(v))
-        element = lst[idx]
-
-        parsed = Evaluator(str(element)).parseValue()
-        if isinstance(parsed, Literal):
-            if isinstance(parsed.val, str) and parsed.val[0:3] in ['T{', 'L{']:
-                val = Natives._toPyList(parsed.val)
-            else:
-                val = parsed.val
-        elif isinstance(parsed, Variable):
-            val = v.getVar(parsed.name)
-        Natives._push(val)
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._pushElement(v, lst[idx])
     @staticmethod
     def setelement(v):
-        newVal = Natives._pop(v)
+        newVal = Natives._coerce(Natives._pop(v))
         idx = Natives._pop(v)
-        lst = Natives._toPyList(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         lst[idx] = newVal
-        Natives._push(Natives._toIntList(lst))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def iterappend(v):
-        val = Natives._pop(v)
-        if isinstance(val, str) and val.startswith(('T{', 'L{')):
-            val = Natives._toPyList(val)
-        lst = Natives._toPyList(Natives._pop(v))
+        val = Natives._coerce(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         lst.append(val)
-        Natives._push(Natives._toIntList(lst))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def iterclear(v):
-        lst = Natives._toPyList(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         lst.clear()
-        Natives._push(Natives._toIntList(lst))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def delelement(v):
         idx = Natives._pop(v)
-        lst = Natives._toPyList(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         del lst[idx]
 
-        Natives._push(Natives._toIntList(lst))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def iterextend(v):
-        extd = Natives._toPyList(Natives._pop(v))
-        lst = Natives._toPyList(Natives._pop(v))
+        extd = Natives._toPyIter(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
         lst.extend(extd)
-        Natives._push(Natives._toIntList(lst))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def sort(v):
         try:
             reverse = (Natives._pop(v) == 1)
         except IndexError:
             reverse = False
-        lst = Natives._toPyList(Natives._pop(v))
-        Natives._push(Natives._toIntList(sorted(lst, reverse=reverse)))
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._push(Natives._toIntIter(sorted(lst, reverse=reverse)))
     @staticmethod
     def iterpop(v):
         try:
@@ -332,30 +414,29 @@ class Natives:
         if not isinstance(idx, int):
             Natives._push(idx)
             idx = -1
-        lst = Natives._toPyList(Natives._pop(v))
-        Natives._push(lst.pop(idx))
-        Natives._push(Natives._toIntList(lst))
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._pushElement(v, lst.pop(idx))
+        Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def itercontains(v):
-        val = Natives._pop(v)
-        lst = Natives._toPyList(Natives._pop(v))
-        Natives._push(lst.find(val))
+        val = Natives._coerce(Natives._pop(v))
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._push(val in lst)
 
     @staticmethod
     def totuple(v):
-        lst = Natives._toPyList(Natives._pop(v))
-        Natives._push(Natives._toIntList(tuple(lst)))
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._push(Natives._toIntIter(tuple(lst)))
     @staticmethod
     def tolist(v):
-        lst = Natives._toPyList(Natives._pop(v))
-        Natives._push(Natives._toIntList(list(lst)))
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._push(Natives._toIntIter(list(lst)))
 
     @staticmethod 
     def dump(v):
         for i in STACK:
             print(i)
    
-
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
@@ -374,7 +455,7 @@ TOKEN_PATTERN = re.compile(
     r'|[A-Za-z_]\w*'
     r'|==|!=|<=|>='
     r'|[+\-*/%=<>]'
-    r'[()\[\],]'
+    r'|[()\[\],]'
     r'|[ \t]+'
     r'|\n'
     r'|.'
@@ -446,24 +527,43 @@ class Evaluator:
             if match.start() < skip_until:
                 continue
             value = match.group()
-            if value in ['[', '(']:
+            if value in ['[', '(', '{']:
                 depth = 1
                 pos = match.end()
 
                 if context == 'funcdef':
                     tokens.append(('PUNCTUATION', value))
                     continue
+
+                if value == '[':
+                    closing = ']'
+                    _type = 'LIST'
+                elif value == '(':
+                    closing = ')'
+                    _type = 'TUPLE'
+                elif value == '{':
+                    closing = '}'
+                    _type = 'MAP'
                 
+                in_str = False
                 while pos < len(self.source) and depth > 0:
-                    if self.source[pos] == value:
+                    c = self.source[pos]
+                    if in_str:
+                        if c == '\\':
+                            pos += 1
+                        elif c == '"':
+                            in_str = False
+                    elif c == '"':
+                        in_str = True
+                    elif c == value:
                         depth += 1
-                    elif self.source[pos] == (']' if value == '[' else ')'):
+                    elif c == closing:
                         depth -= 1
                     pos += 1
                 if depth != 0:
-                    raise SyntaxError(f"Unclosed {'list' if value == '[' else 'tuple'}")
+                    raise SyntaxError(f"Unclosed {_type.lower()}")
 
-                tokens.append(("LIST" if value == '[' else 'TUPLE', self.source[match.end():pos - 1]))
+                tokens.append((_type, self.source[match.end():pos - 1]))
                 skip_until = pos
                 continue
             elif value in (" ", "\t"):
@@ -517,8 +617,11 @@ class Evaluator:
             left = Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
             left = Literal(tok[1])
-        elif tok[0] in ('LIST', 'TUPLE'):
-            left = Literal(f'{tok[0][0]}{{{tok[1]}}}')
+        elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
+            try:
+                left = Literal(Natives._toIntIter(Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')))
+            except ValueError as e:
+                raise SyntaxError(f"Invalid {tok[0].lower()} literal: {e}")
         else:
             raise SyntaxError(f"Unexpected token: {tok}")
 
@@ -613,8 +716,6 @@ class Evaluator:
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseValue()
                 if keywordtok == 'push':
-                    if isinstance(value, Literal) and str(value.val).startswith(('T{', 'L{')):
-                        return Push(Literal(str(value.val).replace(' ', '')))
                     return Push(value)
                 return PushLocal(value)
             elif keywordtok in ['set', 'setglobal']:
@@ -741,6 +842,7 @@ LOCAL_VAR_STACK: list[dict[str, object]] = []
 LOCAL_STACK: list[list] = []
 
 primitive = (int, str, bool)
+
 class Intepreter:
     def __init__(self, prog: Program):
         self.prog = prog
