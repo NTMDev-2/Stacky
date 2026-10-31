@@ -1,0 +1,56 @@
+function iterslice(itx, start, endval, type)
+    define x []
+    define i start
+
+    pushlocal itx
+    calllocalnative iterlen
+
+    if endval > poplocal
+        pushlocal "End value cannot be longer than iterator length."
+        calllocalnative print
+        exit 2 
+    end
+
+    if start < 0
+        pushlocal "Start value must be non-negative."
+        calllocalnative print
+        exit 2
+    end
+
+    if end <= start
+        pushlocal "End value must be larger than start value."
+        calllocalnative print
+        exit 2
+    end
+
+    loop
+        if i > endval
+            if type == "L"
+                push x
+            elif type == "T"
+                pushlocal x
+                calllocalnative totuple
+                poplocal x
+                push x
+            end
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+
+        pushlocal x
+        calllocalnative swap
+
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
+        
+
+
