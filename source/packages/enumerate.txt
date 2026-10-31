@@ -1,13 +1,16 @@
-function enumerate(itx)
+function enumerate(itx, start)
     define x []
-    define p 0
+    define p start
+    define i 0
 
     loop
+        pushlocal i
         pushlocal itx
         calllocalnative iterlen
-        if p >= poplocal
+
+        if i >= poplocal
             exit 3
-        end
+        end 
 
         pushlocal x
         pushlocal p
@@ -15,21 +18,24 @@ function enumerate(itx)
         poplocal x
 
         pushlocal itx
-        pushlocal p 
+        pushlocal i
         calllocalnative getelement
-        
+
         pushlocal x
         calllocalnative swap
 
         calllocalnative iterappend
 
+        calllocalnative totuple
         poplocal x
         push x
         set x []
 
-        pushlocal p
+        pushlocal p 
+        calllocalnative inc 
+        pushlocal i
         calllocalnative inc
-        poplocal p
+        poplocal i
+        poplocal p 
     end
 end
-
