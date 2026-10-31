@@ -1,8 +1,8 @@
 import re
-import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
 from stackview import LocalsViewer, StackViewer
 
@@ -238,6 +238,11 @@ class Natives:
     @staticmethod
     def dec(v):
         Natives._push(Natives._pop(v) - 1)
+    @staticmethod
+    def round(v):
+        d = Natives._pop(v)
+        a = Natives._pop(v)
+        Natives._push(round(a, d)) 
 
     @staticmethod
     def strconcat(v):
@@ -345,6 +350,7 @@ class Natives:
     def dump(v):
         for i in STACK:
             print(i)
+   
 
 NATIVES = {
     name: getattr(Natives, name)
@@ -508,7 +514,7 @@ class Evaluator:
         elif tok[0] in ('NUMBER', 'STRING'):
             left = Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE'):
-            return Literal(f'{tok[0][0]}{{{tok[1]}}}')
+            left = Literal(f'{tok[0][0]}{{{tok[1]}}}')
         else:
             raise SyntaxError(f"Unexpected token: {tok}")
 
@@ -681,6 +687,7 @@ class Evaluator:
                         )
                     IMPORTING_FILES.add(path)
                     try:
+                        start_time = time.time()
                         imported_nodes = Evaluator(forcePath=path).parse()
 
                         for imported_node in imported_nodes:
@@ -689,6 +696,8 @@ class Evaluator:
                                     f"Imported module '{module[1]}' "
                                     "can only contain function definitions and imports"
                                 )
+                        end_time = time.time()
+                        print(f'Successfully imported package \'{module[1]}\' in {round(1000*(end_time-start_time),2)}ms')
                         IMPORTED_FILES.add(path)
                     finally:
                         IMPORTING_FILES.remove(path)
