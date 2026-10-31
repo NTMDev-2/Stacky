@@ -1,0 +1,36 @@
+import itercontains
+function iterunique(itx)
+    define result []
+    define i 0
+    define item 0
+    define found false
+
+    loop
+        pushlocal i
+        pushlocal itx
+        calllocalnative iterlen
+        if i >= poplocal
+            pushlocal result
+            push result
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+        poplocal item
+
+        call itercontains result item
+        if pop == False
+            pushlocal result
+            pushlocal item
+            calllocalnative iterappend
+            poplocal result
+        end
+
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
