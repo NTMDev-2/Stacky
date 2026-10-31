@@ -1,0 +1,28 @@
+function itersum(itx)
+    define x 0 
+    define i 0
+
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+
+        if i >= poplocal
+            push x
+            exit 3 
+        end
+
+        pushlocal itx
+        pushlocal i 
+        calllocalnative getelement
+
+        pushlocal x
+        calllocalnative swap
+        
+        calllocalnative add
+        poplocal x
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
