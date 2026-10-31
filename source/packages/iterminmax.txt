@@ -1,0 +1,55 @@
+function itermax(itx)
+    define i 0
+    define val 0 
+
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+        if i >= poplocal
+            push val
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+        calllocalnative dup
+        if poplocal > val
+            set val poplocal
+        else
+            poplocal 
+        end
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
+
+function itermin(itx)
+    define i 0
+    define val 18446744073709551616
+
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+        if i >= poplocal
+            push val
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+        calllocalnative dup
+        if poplocal < val
+            set val poplocal
+        else
+            poplocal 
+        end
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
