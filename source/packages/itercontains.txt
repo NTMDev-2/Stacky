@@ -1,0 +1,25 @@
+function itercontains(itx, value)
+    define i 0
+
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+
+        if i >= poplocal
+            push false
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+        if poplocal == value
+            push true
+            exit 3
+        end
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
