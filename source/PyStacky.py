@@ -701,6 +701,8 @@ class Evaluator:
         elif tok[0] == 'IDENTIFIER':
             return Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
+            if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
+                raise RuntimeError("Illegal expression")
             return Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             try:
