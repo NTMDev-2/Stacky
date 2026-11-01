@@ -582,7 +582,7 @@ class Evaluator:
                 depth = 1
                 pos = match.end()
 
-                if context == 'funcdef':
+                if context in ('funcdef', 'ifdef'):
                     tokens.append(('PUNCTUATION', value))
                     continue
 
@@ -597,6 +597,10 @@ class Evaluator:
                     _type = 'MAP'
                 
                 in_str = False
+                nested = 0
+                has_top_level_comma = False
+                openers = '([{'
+                closers = ')]}'
                 while pos < len(self.source) and depth > 0:
                     c = self.source[pos]
                     if in_str:
@@ -610,9 +614,20 @@ class Evaluator:
                         depth += 1
                     elif c == closing:
                         depth -= 1
+                    elif c in openers:
+                        nested += 1
+                    elif c in closers:
+                        nested = max(0, nested - 1)
+                    elif c == ',' and depth == 1 and nested == 0:
+                        has_top_level_comma = True
                     pos += 1
                 if depth != 0:
                     raise SyntaxError(f"Unclosed {_type.lower()}")
+
+                body = self.source[match.end():pos - 1]
+                if value == '(' and not has_top_level_comma and body.strip():
+                    tokens.append(('PUNCTUATION', value))
+                    continue
 
                 tokens.append((_type, self.source[match.end():pos - 1]))
                 skip_until = pos
@@ -631,6 +646,8 @@ class Evaluator:
             elif value in KEYWORDS:
                 if value == 'function':
                     context = 'funcdef'
+                elif value == 'if':
+                    context = 'ifdef'
                 elif value in ['push', 'pop', 'pushlocal', 'poplocal', 'define', 'defineglobal', 'set', 'setglobal']:
                     context = 'valuedef'
                 elif value == 'end':
@@ -722,7 +739,7 @@ class Evaluator:
     def parseCondition(self):
         condition = self.parseExpression()
 
-        if not isinstance(condition, (BooleanExpression, Condition, Pop, PopLocal)):
+        if not isinstance(condition, (BooleanExpression, Condition, Pop, PopLocal, Variable, Literal)):
             raise TypeError("Expected a comparison condition")
         if self.peek() and self.peek()[0] == 'NEWLINE':
             self.advance()
