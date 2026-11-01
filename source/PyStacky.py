@@ -967,11 +967,11 @@ class Intepreter:
                 variables = GLOBAL_VAR
             else:
                 variables = LOCAL_VAR_STACK[-1]
-            if node.name in variables:
+            if node.name in variables or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
             variables[node.name] = self.evaluate(node.value, context)
         elif isinstance(node, DefineGlobalVar):
-            if node.name in GLOBAL_VAR:
+            if node.name in GLOBAL_VAR or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
             GLOBAL_VAR[node.name] = self.evaluate(node.value, context)
         elif isinstance(node, SetVar):
