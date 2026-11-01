@@ -53,20 +53,28 @@ class Call(Node):
     func: str 
     args: list
 @dataclass
-class Literal(Node):
-    val: object
-@dataclass
 class InvokeNative(Node):
     name: str
     local: bool = False
+
+
+@dataclass
+class Literal(Node):
+    val: object
 @dataclass
 class Variable(Node):
     name: str
+
 @dataclass
 class Condition(Node):
     left: object
     op: str
     right: object
+@dataclass
+class BooleanExpression(Node):
+    left: Condition
+    op: str 
+    right: Condition
 @dataclass
 class If(Node):
     branches: list
@@ -76,6 +84,7 @@ class BlockExit(Node):
 @dataclass
 class Loop(Node):
     body: list
+
 @dataclass
 class Import(Node):
     package: str
@@ -487,6 +496,20 @@ TOKEN_PATTERN = re.compile(
     r'|\n'
     r'|.'
 )
+PRECEDENCE = {
+    'OR': 1,
+    'AND': 2,
+    '==': 3,
+    '!=': 3,
+    '<': 3,
+    '>': 3,
+    '<=': 3,
+    '>=': 3,
+    '+': 4,
+    '-': 4,
+    '*': 5,
+    '/': 5,
+}
 BASE_DIR = Path(__file__).parent
 
 FUNCTIONS: dict[str, Function] = {}
@@ -616,6 +639,8 @@ class Evaluator:
                 tokens.append(("IDENTIFIER", value))
             elif value in ['==', '>=', '<=', '!=', '>', '<']:
                 tokens.append(("OPERATOR", value))
+            elif value in ['&&', '||']:
+                tokens.append(("BOOLOP", value))
             elif value in "~&^|":
                 tokens.append(("BINOP", value))
             elif value in "()[],":
@@ -660,6 +685,37 @@ class Evaluator:
             operator = self.advance()[1]
             right = self.parseValue()
             return Condition(left, operator, right)
+        elif next_tok and next_tok[0] == 'BINOP':
+            return self.parseExpression()
+
+        return left
+    def parseExpression(self, min_precedence=0):
+        def parsePrimary():
+            token = self.peek()
+    
+            if token[1] == '(':
+                self.advance()
+                expression = self.parseExpression()
+                
+                if token[1] != ')':
+                    raise SyntaxError(f'No closing brace found for {token} while building BooleanExpression')
+                self.advance()
+                return expression
+    
+            return self.parseValue()
+        left = parsePrimary()
+
+        while self.tokens[self.pos][0] == 'BOOLOP':
+            op = self.peek()
+            precedence = PRECEDENCE.get(op)
+
+            if precedence is None or precedence < min_precedence:
+                break
+
+            self.advance()
+
+            right = self.parseExpression(precedence + 1)
+            left = BooleanExpression(left, op, right)
 
         return left
     def parseCondition(self):
@@ -838,7 +894,7 @@ class Evaluator:
 
                 return Import(module[1])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
-        elif tok[0] in ["NUMBER", "STRING", 'OPERATOR']:
+        elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
         else:
             raise SyntaxError(f"Unexpected token: {tok}")
