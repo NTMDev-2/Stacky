@@ -1,8 +1,8 @@
 import re
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-import time
 
 from stackview import LocalsViewer, StackViewer
 
@@ -924,7 +924,6 @@ LOCAL_VAR_STACK: list[dict[str, object]] = []
 LOCAL_STACK: list[list] = []
 
 primitive = (int, str, bool)
-
 class Intepreter:
     def __init__(self, prog: Program):
         self.prog = prog
@@ -939,16 +938,16 @@ class Intepreter:
     def getVar(self, name, context=None):
         if context is None:
             context = {}
-
+        
         if self.scope != 'GLOBAL':
             if name in context:
                 return context[name]
-
             if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
                 return LOCAL_VAR_STACK[-1][name]
-
-        if name in GLOBAL_VAR:
+        elif name in GLOBAL_VAR:
             return GLOBAL_VAR[name]
+        elif name in FUNCTIONS:
+            return FUNCTIONS[name]
 
         raise NameError(f"Variable '{name}' is not defined")
     def evaluate(self, node, context: dict[str, object] = {}):
