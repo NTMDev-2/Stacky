@@ -57,7 +57,6 @@ class InvokeNative(Node):
     name: str
     local: bool = False
 
-
 @dataclass
 class Literal(Node):
     val: object
@@ -489,7 +488,7 @@ TOKEN_PATTERN = re.compile(
     r'"(?:\\.|[^"\\])*"'
     r'|-?\d+(?:\.\d+)?'
     r'|[A-Za-z_]\w*'
-    r'|==|!=|<=|>='
+    r'|==|!=|<=|>=|&&|\|\|'
     r'|[+\-*/%=<>]'
     r'|[()\[\],]'
     r'|[ \t]+'
@@ -497,18 +496,14 @@ TOKEN_PATTERN = re.compile(
     r'|.'
 )
 PRECEDENCE = {
-    'OR': 1,
-    'AND': 2,
+    '||': 1,
+    '&&': 2,
     '==': 3,
     '!=': 3,
     '<': 3,
     '>': 3,
     '<=': 3,
     '>=': 3,
-    '+': 4,
-    '-': 4,
-    '*': 5,
-    '/': 5,
 }
 BASE_DIR = Path(__file__).parent
 
@@ -651,79 +646,76 @@ class Evaluator:
                 raise SyntaxError(f"Unexpected character: {value!r}")
 
         self.tokens = tokens
-    
-    def parseValue(self):
+
+    def parseExpression(self, min_precedence=0):
+        left = self.parseSingular()
+
+        while True:
+            next_tok = self.peek()
+            if not next_tok or next_tok[0] not in ['OPERATOR', 'BOOLOP']:
+                break
+
+            operator = next_tok[1]
+            try:
+                precedence = PRECEDENCE[operator.upper()]
+            except KeyError:
+                raise SyntaxError(f"Unknown operator: {operator!r}")
+
+            if precedence < min_precedence:
+                break
+
+            self.advance()
+            right = self.parseExpression(precedence + 1)
+
+            if operator.upper() in ('&&', '||'):
+                left = BooleanExpression(left, operator, right)
+            else:
+                left = Condition(left, operator, right)
+
+        return left
+    def parseSingular(self):
         tok = self.advance()
 
         if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
             if tok[1] == 'pop':
-                left = Pop(None)
-            else:
-                left = PopLocal(None)
-        elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null', 'none'):
-            if tok[1] == 'true':
-                left = Literal(True)
-            elif tok[1] == 'false':
-                left = Literal(False)
-            elif tok[1] in ('null', 'none'):
-                left = Literal(None)
+                return Pop(None)
+            return PopLocal(None)
+        elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null'):
+            value = tok[1].lower()
+            if value == 'true':
+                return Literal(True)
+            elif value == 'false':
+                return Literal(False)
+            return Literal(None)
         elif tok[0] == 'IDENTIFIER':
-            left = Variable(tok[1])
+            return Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
-            left = Literal(tok[1])
+            return Literal(tok[1])
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             try:
-                left = Literal(Natives._toIntIter(Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')))
+                return Literal(
+                    Natives._toIntIter(
+                        Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')
+                    )
+                )
             except ValueError as e:
-                raise SyntaxError(f"Invalid {tok[0].lower()} literal: {e}")
-        else:
-            raise SyntaxError(f"Unexpected token: {tok}")
-
-        next_tok = self.peek()
-
-        if next_tok and next_tok[0] == 'OPERATOR':
-            operator = self.advance()[1]
-            right = self.parseValue()
-            return Condition(left, operator, right)
-        elif next_tok and next_tok[0] == 'BINOP':
-            return self.parseExpression()
-
-        return left
-    def parseExpression(self, min_precedence=0):
-        def parsePrimary():
-            token = self.peek()
+                raise SyntaxError(
+                    f"Invalid {tok[0].lower()} literal: {e}"
+                ) from e
+        elif tok[1] == '(':
+            expression = self.parseExpression()
+            closing = self.advance()
+            if closing[1] != ')':
+                raise SyntaxError(f"Expected a closing parenthesis, got {closing[1]!r}")
+            return expression
+        
+        raise SyntaxError(f"Unexpected token: {tok}")
     
-            if token[1] == '(':
-                self.advance()
-                expression = self.parseExpression()
-                
-                if token[1] != ')':
-                    raise SyntaxError(f'No closing brace found for {token} while building BooleanExpression')
-                self.advance()
-                return expression
-    
-            return self.parseValue()
-        left = parsePrimary()
-
-        while self.tokens[self.pos][0] == 'BOOLOP':
-            op = self.peek()
-            precedence = PRECEDENCE.get(op)
-
-            if precedence is None or precedence < min_precedence:
-                break
-
-            self.advance()
-
-            right = self.parseExpression(precedence + 1)
-            left = BooleanExpression(left, op, right)
-
-        return left
     def parseCondition(self):
-        condition = self.parseValue()
+        condition = self.parseExpression()
 
-        if not isinstance(condition, (Condition, Pop, PopLocal)):
+        if not isinstance(condition, (BooleanExpression, Condition, Pop, PopLocal)):
             raise TypeError("Expected a comparison condition")
-
         if self.peek() and self.peek()[0] == 'NEWLINE':
             self.advance()
 
@@ -787,7 +779,7 @@ class Evaluator:
 
             if keywordtok in ['define', 'defineglobal']:
                 name = self.advance()[1]
-                value = self.parseValue()
+                value = self.parseExpression()
                 if keywordtok == 'define':
                     return DefineVar(name, value)
                 return DefineGlobalVar(name, value)
@@ -799,13 +791,13 @@ class Evaluator:
                     return Pop(varOptional)
                 return PopLocal(varOptional)
             elif keywordtok in ['push', 'pushlocal']:
-                value = self.parseValue()
+                value = self.parseExpression()
                 if keywordtok == 'push':
                     return Push(value)
                 return PushLocal(value)
             elif keywordtok in ['set', 'setglobal']:
                 name = self.advance()[1]
-                value = self.parseValue()
+                value = self.parseExpression()
                 if keywordtok == 'set':
                     return SetVar(name, value)
                 return SetGlobalVar(name, value)
@@ -814,7 +806,7 @@ class Evaluator:
                 args = []
 
                 while self.peek() is not None and self.peek()[0] != 'NEWLINE':
-                    args.append(self.parseValue())
+                    args.append(self.parseExpression())
 
                 return Call(func, args)
             elif keywordtok == 'function':
@@ -853,7 +845,7 @@ class Evaluator:
                 return self.parseIf()
             elif keywordtok == 'exit':
                 try:
-                    depth = self.parseValue()
+                    depth = self.parseExpression()
                 except SyntaxError:
                     depth = 1
                 if isinstance(depth, Literal) and str(depth.val).isnumeric():
@@ -1052,6 +1044,16 @@ class Intepreter:
                 NATIVES[node.name](self)
             finally:
                 Natives.local = False
+        elif isinstance(node, BooleanExpression):
+            left = self.evaluate(node.left, context)
+            right = self.evaluate(node.right, context)
+
+            if node.op == "&&":
+                return left and right
+            elif node.op == "||":
+                return left or right
+
+            raise ValueError(f"Unknown boolean operator: {node.op}")
         elif isinstance(node, Condition):
             left = self.evaluate(node.left, context)
             right = self.evaluate(node.right, context)
