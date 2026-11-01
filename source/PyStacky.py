@@ -56,6 +56,12 @@ class Call(Node):
 class InvokeNative(Node):
     name: str
     local: bool = False
+@dataclass
+class Apply(Node):
+    func: str
+@dataclass
+class ApplyLocal(Node):
+    func: str
 
 @dataclass
 class Literal(Node):
@@ -487,7 +493,7 @@ KEYWORDS = [
     'define', 'defineglobal', 'pop', 'push', 
     'function', 'end', 'call', 'set', 'setglobal', 
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
-    'calllocalnative', 'exit', 'loop', 'import'
+    'calllocalnative', 'exit', 'loop', 'import', 'apply'
 ]
 TOKEN_PATTERN = re.compile(
     r'"(?:\\.|[^"\\])*"'
@@ -814,6 +820,11 @@ class Evaluator:
                     args.append(self.parseExpression())
 
                 return Call(func, args)
+            elif keywordtok in ['apply', 'applylocal']:
+                func = self.advance()[1]
+                if keywordtok == 'apply':
+                    return Apply(func)
+                return ApplyLocal(func)
             elif keywordtok == 'function':
                 name = self.advance()[1]
                 if self.advance()[1] != '(':
@@ -951,7 +962,7 @@ class Intepreter:
 
         raise NameError(f"Variable '{name}' is not defined")
     def _toInternalRepr(self, val: str):
-        if val.startswith('<FunctionInstance '):
+        if isinstance(val, str) and val.startswith('<FunctionInstance '):
             func_name = val[len('<FunctionInstance '):-1]
             return FUNCTIONS.get(func_name)
         return val
@@ -1024,6 +1035,20 @@ class Intepreter:
                     LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
             else:
                 return self._toInternalRepr(LOCAL_STACK[-1].pop())  
+        elif isinstance(node, (Apply, ApplyLocal)):
+            if isinstance(node, ApplyLocal):
+                raw_args = LOCAL_STACK.pop()
+            else:
+                raw_args = STACK.pop()
+            args = Natives._toPyIter(raw_args)
+
+            if not isinstance(args, (list, tuple)):
+                raise TypeError(
+                    f"Apply expects a list or tuple of arguments, "
+                    f"got {type(args).__name__}"
+                )
+
+            self.evaluate(Call(node.func, list(args)))
         elif isinstance(node, (Function, Import)):
             return None
         elif isinstance(node, Call):
