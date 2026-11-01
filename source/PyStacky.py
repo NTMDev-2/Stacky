@@ -950,6 +950,11 @@ class Intepreter:
             return FUNCTIONS[name]
 
         raise NameError(f"Variable '{name}' is not defined")
+    def _toInternalRepr(self, val: str):
+        if val.startswith('<FunctionInstance '):
+            func_name = val[len('<FunctionInstance '):-1]
+            return FUNCTIONS.get(func_name)
+        return val
     def evaluate(self, node, context: dict[str, object] = {}):
         if isinstance(node, Literal):
             return node.val
@@ -984,39 +989,51 @@ class Intepreter:
                 raise NameError(f"Variable '{node.name}' is not defined")
             GLOBAL_VAR[node.name] = value
         elif isinstance(node, Push):
-            STACK.append(self.evaluate(node.value, context))
+            val = self.evaluate(node.value, context)
+            if isinstance(val, Function):
+                val = f'<FunctionInstance {val.name}>'
+            STACK.append(val)
         elif isinstance(node, Pop):
             if node.varOptional is not None:
                 if node.varOptional in context:
-                    context[node.varOptional] = STACK.pop()
+                    context[node.varOptional] = self._toInternalRepr(STACK.pop())
                 elif self.scope != 'GLOBAL' and node.varOptional in LOCAL_VAR_STACK[-1]:
-                    LOCAL_VAR_STACK[-1][node.varOptional] = STACK.pop()
+                    LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(STACK.pop())
                 elif node.varOptional in GLOBAL_VAR:
-                    GLOBAL_VAR[node.varOptional] = STACK.pop()
+                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(STACK.pop())
                 else:
                     raise NameError(f"Variable '{node.varOptional}' is not defined")
             else:
-                return STACK.pop()
+                return self._toInternalRepr(STACK.pop())
         elif isinstance(node, PushLocal):
             if self.scope == 'GLOBAL':
                 raise RuntimeError('PushLocal without a scope')
-            LOCAL_STACK[-1].append(self.evaluate(node.value, context))
+            val = self.evaluate(node.value, context)
+            if isinstance(val, Function):
+                val = f'<FunctionInstance {val.name}>'
+            LOCAL_STACK[-1].append(val)
         elif isinstance(node, PopLocal):
             if self.scope == 'GLOBAL':
                 raise RuntimeError('PopLocal without a scope')
             if node.varOptional is not None:
                 if node.varOptional in context:
-                    context[node.varOptional] = LOCAL_STACK[-1].pop()
+                    context[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
                 elif node.varOptional in GLOBAL_VAR:
-                    GLOBAL_VAR[node.varOptional] = LOCAL_STACK[-1].pop()
+                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
                 elif node.varOptional in LOCAL_VAR_STACK[-1]:
-                    LOCAL_VAR_STACK[-1][node.varOptional] = LOCAL_STACK[-1].pop()
+                    LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
             else:
-                return LOCAL_STACK[-1].pop()
+                return self._toInternalRepr(LOCAL_STACK[-1].pop())  
         elif isinstance(node, (Function, Import)):
             return None
         elif isinstance(node, Call):
-            func = FUNCTIONS[node.func]
+            try:
+                func = FUNCTIONS[node.func]
+            except KeyError:
+                if isinstance(self.getVar(node.func, context), Function):
+                    func = self.getVar(node.func, context)
+                else:
+                    raise TypeError(f"Function '{node.func}' is not defined")
             previous_scope = self.scope
 
             args_as_dict = dict(
