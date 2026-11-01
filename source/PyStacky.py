@@ -111,7 +111,7 @@ class _CollectionReader:
         ch = self.peek()
         if not ch:
             raise self.error('Unexpected end of collection')
-        if ch == '"':
+        if ch in ('"', "'"):
             return self.readString()
         if ch in self.CLOSERS:
             self.pos += 1
@@ -503,11 +503,11 @@ class Evaluator:
                     escaped = False
                 elif char == '\\':
                     escaped = True
-                elif char == '"':
+                elif char in ('"', "'"):
                     in_string = False
                 continue
 
-            if char == '"':
+            if char in ('"', "'"):
                 in_string = True
                 chars.append(char)
             elif char == ';':
