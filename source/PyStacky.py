@@ -315,6 +315,11 @@ class Natives:
     def pick(v):
         n = Natives._pop(v)
         Natives._push(Natives._getStack()[-1 - n])
+    @staticmethod
+    def roll(v):
+        n = Natives._pop(v)
+        stack = Natives._getStack()
+        stack[-1 - n], stack[-1] = stack[-1], stack[-1 - n]
 
     @staticmethod
     def mod(v):
