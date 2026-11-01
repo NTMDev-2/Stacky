@@ -436,11 +436,6 @@ class Natives:
         lst = Natives._toPyIter(Natives._pop(v))
         Natives._pushElement(v, lst.pop(idx))
         Natives._push(Natives._toIntIter(lst))
-    @staticmethod
-    def itercontains(v):
-        val = Natives._coerce(Natives._pop(v))
-        lst = Natives._toPyIter(Natives._pop(v))
-        Natives._push(val in lst)
 
     @staticmethod
     def totuple(v):
