@@ -304,7 +304,7 @@ class Natives:
     def depth(v):
         Natives._push(len(Natives._getStack()))
     @staticmethod
-    def pick(v):          # copy Nth item to top (N popped)
+    def pick(v):
         n = Natives._pop(v)
         Natives._push(Natives._getStack()[-1 - n])
 
@@ -387,10 +387,10 @@ class Natives:
     @staticmethod
     def delelement(v):
         idx = Natives._pop(v)
-        lst = Natives._toPyIter(Natives._pop(v))
-        del lst[idx]
+        itr = Natives._toPyIter(Natives._pop(v))
+        del itr[idx]
 
-        Natives._push(Natives._toIntIter(lst))
+        Natives._push(Natives._toIntIter(itr))
     @staticmethod
     def iterextend(v):
         extd = Natives._toPyIter(Natives._pop(v))
@@ -437,6 +437,33 @@ class Natives:
         for i in STACK:
             print(i)
 
+    @staticmethod 
+    def dictgetvalue(v):
+        try:
+            default = Natives._pop(v)
+        except Exception:
+            default = None
+        if not isinstance(default, int):
+            Natives._push(default)
+            default = None
+        key = Natives._pop(v)
+        dct = Natives._toPyIter(Natives._pop(v))
+        Natives._pushElement(v, dct.get(key, default))
+    @staticmethod
+    def dictsetvalue(v):
+        val = Natives._pop(v)
+        key = Natives._pop(v)
+        dct = Natives._toPyIter(Natives._pop(v))
+        dct[key] = val
+        Natives._pushElement(v, dct)
+    @staticmethod 
+    def dictkeys(v):
+        dct = Natives._toPyIter(Natives._pop(v))
+        Natives._pushElement(v, list(dct.keys()))
+    @staticmethod 
+    def dictvalues(v):
+        dct = Natives._toPyIter(Natives._pop(v))
+        Natives._pushElement(v, list(dct.values()))
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
