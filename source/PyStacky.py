@@ -436,7 +436,7 @@ class Natives:
     def dump(v):
         for i in STACK:
             print(i)
-   
+
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
@@ -608,11 +608,13 @@ class Evaluator:
                 left = Pop(None)
             else:
                 left = PopLocal(None)
-        elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false'):
+        elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null', 'none'):
             if tok[1] == 'true':
                 left = Literal(True)
-            else:
+            elif tok[1] == 'false':
                 left = Literal(False)
+            elif tok[1] in ('null', 'none'):
+                left = Literal(None)
         elif tok[0] == 'IDENTIFIER':
             left = Variable(tok[1])
         elif tok[0] in ('NUMBER', 'STRING'):
