@@ -138,6 +138,8 @@ class StackViewer(_Polled, tk.Tk):
         try:
             more = self.interpreter.step()
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             self.pause()
             self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
             return "error"
