@@ -4,4 +4,4 @@ Stacky is another cool language I made, and this time is stack based. It comes w
 
 To play with Stacky, you need Python 3.13+ and be able to open tkinter popups. 
 
-Read the tutorial on how to use `PyStacky` (aka `Stacky`) [here](https://esolangs.org/wiki/PyStacky), on Esolangs.
+Read the tutorial and documentation on how to use `PyStacky` (aka `Stacky`) [here](https://esolangs.org/wiki/PyStacky), on Esolangs.
