@@ -70,6 +70,10 @@ class Literal(Node):
 @dataclass
 class Variable(Node):
     name: str
+@dataclass
+class CollectionLiteral(Node):
+    prefix: str  # 'L', 'T' or 'M'
+    text: str
 
 @dataclass
 class Condition(Node):
@@ -111,9 +115,11 @@ class _CollectionReader:
     KINDS = {'[': list, '(': tuple, '{': dict, 'L': list, 'T': tuple, 'M': dict}
     ESCAPES = {'n': '\n', 't': '\t', '\\': '\\', '"': '"'}
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, popHook=None):
         self.text = text
         self.pos = 0
+        # Called with 'pop' or 'poplocal' when one appears as a bare item
+        self.popHook = popHook
     def error(self, msg):
         return ValueError(f"{msg} at position {self.pos} in {self.text!r}")
     def peek(self):
@@ -150,6 +156,8 @@ class _CollectionReader:
             name = match.group()
             if name.lower() in ('true', 'false'):
                 return name.lower() == 'true'
+            if self.popHook is not None and name in ('pop', 'poplocal'):
+                return self.popHook(name)
             return Ref(name)
 
         raise self.error(f'Unexpected character {ch!r}')
@@ -731,6 +739,20 @@ class Evaluator:
                 raise RuntimeError("Illegal expression")
             return Literal(tok[1], line=self.line)
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
+            prefix = tok[0][0]
+            # Dry run: does the collection contain pop/poplocal?
+            found_pop = []
+            def noteMarker(name):
+                found_pop.append(name)
+                return 0
+            try:
+                _CollectionReader(f'{prefix}{{{tok[1]}}}', noteMarker).readDocument()
+            except ValueError as e:
+                raise SyntaxError(
+                    f"Invalid {tok[0].lower()} literal: {e}"
+                ) from e
+            if found_pop:
+                return CollectionLiteral(prefix, tok[1], line=self.line)
             try:
                 return Literal(
                     Natives._toIntIter(
@@ -754,7 +776,7 @@ class Evaluator:
     def parseCondition(self):
         condition = self.parseExpression()
 
-        if not isinstance(condition, (BooleanExpression, Condition, Pop, PopLocal, Variable, Literal)):
+        if not isinstance(condition, (BooleanExpression, Condition, Pop, PopLocal, Variable, Literal, CollectionLiteral)):
             raise TypeError("Expected a comparison condition")
         if self.peek() and self.peek()[0] == 'NEWLINE':
             self.advance()
@@ -1035,6 +1057,17 @@ class Intepreter:
             return node
         elif isinstance(node, Variable):
             return self.getVar(node.name, context)
+        elif isinstance(node, CollectionLiteral):
+            def popItem(name):
+                if name == 'poplocal':
+                    if self.scope == 'GLOBAL':
+                        raise RuntimeError('PopLocal without a scope')
+                    stack = LOCAL_STACK[-1]
+                else:
+                    stack = STACK
+                return Natives._coerce(stack.pop())
+            items = _CollectionReader(f'{node.prefix}{{{node.text}}}', popItem).readDocument()
+            return Natives._toIntIter(items)
         elif isinstance(node, DefineVar):
             if self.scope == 'GLOBAL':
                 variables = GLOBAL_VAR
