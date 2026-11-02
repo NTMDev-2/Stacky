@@ -141,7 +141,7 @@ class StackViewer(_Polled, tk.Tk):
             import traceback
             traceback.print_exc()
             self.pause()
-            self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
+            self.set_status(f"Error: {type(exc).__name__}: {exc} at line {self.interpreter.nodes[self.interpreter.pos].line}", error=True)
             return "error"
 
         if not more:
