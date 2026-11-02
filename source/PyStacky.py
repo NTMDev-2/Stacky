@@ -1,14 +1,15 @@
 import re
 import time
 import tkinter as tk
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from stackview import LocalsViewer, StackViewer
 
 
+@dataclass
 class Node:
-    pass
+    line: int = field(default=0, kw_only=True)
 
 @dataclass
 class DefineVar(Node):
@@ -40,7 +41,6 @@ class PopLocal(Node):
 class PushLocal(Node):
     value: str | object
 @dataclass
-
 class Function(Node):
     name: str
     args: list[str]
@@ -531,6 +531,7 @@ class Evaluator:
         except (FileNotFoundError, OSError):
             self.source = fileName
         self.pos = 0
+        self.line = 1
         self.tokens: list[tuple[str, str]] = []
         self.lex()
     def lex(self):
@@ -699,9 +700,9 @@ class Evaluator:
             right = self.parseExpression(precedence + 1)
 
             if operator.upper() in ('&&', '||'):
-                left = BooleanExpression(left, operator, right)
+                left = BooleanExpression(left, operator, right, line=self.line)
             else:
-                left = Condition(left, operator, right)
+                left = Condition(left, operator, right, line=self.line)
 
         return left
     def parseSingular(self):
@@ -709,27 +710,28 @@ class Evaluator:
 
         if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
             if tok[1] == 'pop':
-                return Pop(None)
-            return PopLocal(None)
+                return Pop(None, line=self.line)
+            return PopLocal(None, line=self.line)
         elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null'):
             value = tok[1].lower()
             if value == 'true':
-                return Literal(True)
+                return Literal(True, line=self.line)
             elif value == 'false':
-                return Literal(False)
-            return Literal(None)
+                return Literal(False, line=self.line)
+            return Literal(None, line=self.line)
         elif tok[0] == 'IDENTIFIER':
-            return Variable(tok[1])
+            return Variable(tok[1], line=self.line)
         elif tok[0] in ('NUMBER', 'STRING'):
             if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
                 raise RuntimeError("Illegal expression")
-            return Literal(tok[1])
+            return Literal(tok[1], line=self.line)
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             try:
                 return Literal(
                     Natives._toIntIter(
                         Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')
-                    )
+                    ),
+                    line=self.line
                 )
             except ValueError as e:
                 raise SyntaxError(
@@ -804,7 +806,7 @@ class Evaluator:
             raise SyntaxError("Expected 'end' to close if statement")
 
         self.advance()
-        return If(branches)
+        return If(branches, line=self.line)
     def parseStatement(self):
         tok = self.advance()
         if tok[0] == 'KEYWORD':
@@ -814,26 +816,26 @@ class Evaluator:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'define':
-                    return DefineVar(name, value)
-                return DefineGlobalVar(name, value)
+                    return DefineVar(name, value, line=self.line)
+                return DefineGlobalVar(name, value, line=self.line)
             elif keywordtok in ['pop', 'poplocal']:
                 varOptional = None
                 if self.peek() and self.peek()[0] == 'IDENTIFIER':
                     varOptional = self.advance()[1]
                 if keywordtok == 'pop':
-                    return Pop(varOptional)
-                return PopLocal(varOptional)
+                    return Pop(varOptional, line=self.line)
+                return PopLocal(varOptional, line=self.line)
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseExpression()
                 if keywordtok == 'push':
-                    return Push(value)
-                return PushLocal(value)
+                    return Push(value, line=self.line)
+                return PushLocal(value, line=self.line)
             elif keywordtok in ['set', 'setglobal']:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'set':
-                    return SetVar(name, value)
-                return SetGlobalVar(name, value)
+                    return SetVar(name, value, line=self.line)
+                return SetGlobalVar(name, value, line=self.line)
             elif keywordtok == 'call':
                 func = self.advance()[1]
                 args = []
@@ -841,12 +843,12 @@ class Evaluator:
                 while self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     args.append(self.parseExpression())
 
-                return Call(func, args)
+                return Call(func, args, line=self.line)
             elif keywordtok in ['apply', 'applylocal']:
                 func = self.advance()[1]
                 if keywordtok == 'apply':
-                    return Apply(func)
-                return ApplyLocal(func)
+                    return Apply(func, line=self.line)
+                return ApplyLocal(func, line=self.line)
             elif keywordtok == 'function':
                 name = self.advance()[1]
                 if self.advance()[1] != '(':
@@ -870,13 +872,13 @@ class Evaluator:
                     raise SyntaxError(f"Function '{name}' is missing 'end'")
 
                 self.advance()
-                func = Function(name, args, body)
+                func = Function(name, args, body, line=self.line)
                 FUNCTIONS[name] = func
                 return func
             elif keywordtok in ['callnative', 'calllocalnative']:
                 name = self.advance()[1]
 
-                return InvokeNative(name, (keywordtok == 'calllocalnative'))
+                return InvokeNative(name, (keywordtok == 'calllocalnative'), line=self.line)
             elif keywordtok == 'end':
                 raise SyntaxError("'end' without a matching block")
             elif keywordtok == 'if':
@@ -887,12 +889,12 @@ class Evaluator:
                 except SyntaxError:
                     depth = 1
                 if isinstance(depth, Literal) and str(depth.val).isnumeric():
-                    return BlockExit(depth.val)
-                return BlockExit()
+                    return BlockExit(depth.val, line=self.line)
+                return BlockExit(line=self.line)
             elif keywordtok == 'loop':
                 body = self.parseBlock({'end'})
                 self.advance()
-                return Loop(body)
+                return Loop(body, line=self.line)
             elif keywordtok == 'import':
                 module = self.advance()
                 if module is None or module[0] != 'IDENTIFIER':
@@ -922,7 +924,7 @@ class Evaluator:
                     finally:
                         IMPORTING_FILES.remove(path)
 
-                return Import(module[1])
+                return Import(module[1], line=self.line)
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
@@ -944,6 +946,7 @@ class Evaluator:
 
         while self.peek() is not None:
             if self.peek()[0] == 'NEWLINE':
+                self.line += 1
                 self.advance()
                 continue
 
@@ -968,17 +971,17 @@ class Intepreter:
 
         self.stack_frames: list[dict] = []
 
+        self.currentnode = None
+
     def getVar(self, name, context=None):
         if context is None:
             context = {}
-        
         
         if name in GLOBAL_VAR:
             return GLOBAL_VAR[name]
         elif name in FUNCTIONS:
             return FUNCTIONS[name]
-
-        if self.scope != 'GLOBAL':
+        elif self.scope != 'GLOBAL':
             if name in context:
                 return context[name]
             if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
