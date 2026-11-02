@@ -1225,7 +1225,7 @@ class Intepreter:
             if not isFunction:
                 raise RuntimeError('Return outside a function')
 
-            frame = self.stack_frames[-1]
+            frame = self.stack_frames[-returnDepth]
 
             frame['return_value'] = (
                 self.evaluate(node.value, context)
