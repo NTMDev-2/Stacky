@@ -1064,7 +1064,7 @@ class Intepreter:
                 return self._toInternalRepr(LOCAL_STACK[-1].pop())  
         elif isinstance(node, (Apply, ApplyLocal)):
             if isinstance(node, ApplyLocal):
-                raw_args = LOCAL_STACK.pop()
+                raw_args = LOCAL_STACK[-1].pop()
             else:
                 raw_args = STACK.pop()
             args = Natives._toPyIter(raw_args)
