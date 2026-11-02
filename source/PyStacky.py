@@ -495,11 +495,11 @@ TOKEN_PATTERN = re.compile(
     r'|-?\d+(?:\.\d+)?'
     r'|[A-Za-z_]\w*'
     r'|==|!=|<=|>=|&&|\|\|'
-    r'|[+\-*/%=<>]'
     r'|[()\[\],]'
     r'|[ \t]+'
     r'|\n'
     r'|.'
+    r'//[^\n]*|...'
 )
 PRECEDENCE = {
     '||': 1,
@@ -570,7 +570,6 @@ class Evaluator:
         self.source = ''.join(chars)
         tokens = []
         context = ''
-
         matches = iter(TOKEN_PATTERN.finditer(self.source))
         skip_until = 0
 
@@ -578,6 +577,7 @@ class Evaluator:
             if match.start() < skip_until:
                 continue
             value = match.group()
+        
             if value in ['[', '(', '{']:
                 depth = 1
                 pos = match.end()
@@ -633,6 +633,14 @@ class Evaluator:
                 skip_until = pos
                 continue
             elif value in (" ", "\t"):
+                continue
+            elif value.startswith('//'):
+                pos = self.source.find('\n', match.start())
+
+                if pos == -1:
+                    break
+
+                skip_until = pos
                 continue
             elif value == "\n":
                 if context == 'valuedef':
