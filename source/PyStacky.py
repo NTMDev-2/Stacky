@@ -989,7 +989,7 @@ class Intepreter:
 
         raise NameError(f"Variable '{name}' is not defined")
 
-    def _resolveList(self, internalList: list | tuple, scope: typing.Literal['local', 'global']):
+    def _resolveList(self, internalList: list | tuple, scope: typing.Literal['local', 'global'], context):
         if scope == 'local':
             _vars = LOCAL_VAR_STACK[-1]
         else:
@@ -999,7 +999,9 @@ class Intepreter:
             internalList = list(internalList)
 
         for idx, item in enumerate(internalList):
-            if isinstance(item, str) and item in _vars:
+            if isinstance(item, Ref):
+                internalList[idx] = self.getVar(item, context)
+            elif isinstance(item, str) and item in _vars:
                 internalList[idx] = _vars[item]
             elif isinstance(item, str) and item.startswith('<FunctionInstance '):
                 func_name = item[len('<FunctionInstance '):-1]
@@ -1007,8 +1009,9 @@ class Intepreter:
             elif isinstance(item, primitive):
                 internalList[idx] = item
             elif isinstance(item, (list, tuple)):
-                self._resolveList(item, scope)
-        
+                self._resolveList(item, scope, context)
+            else:
+                raise ValueError(f"Unsupported item type in list: {type(item)}")
         return internalList
     def _toInternalRepr(self, val: str):
         if isinstance(val, str) and val.startswith('<FunctionInstance '):
@@ -1103,7 +1106,7 @@ class Intepreter:
                 previous_local = Natives.local
                 try:
                     Natives.local = is_local
-                    for i in self._resolveList(args,'local' if is_local else 'global'):
+                    for i in self._resolveList(args,'local' if is_local else 'global', context):
                         Natives._push(self.evaluate(i, context))
                     self.evaluate(InvokeNative(node.func, local=is_local))
                 finally:
