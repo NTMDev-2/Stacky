@@ -488,10 +488,11 @@ KEYWORDS = [
     'define', 'defineglobal', 'pop', 'push', 
     'function', 'end', 'call', 'set', 'setglobal', 
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
-    'calllocalnative', 'exit', 'loop', 'import', 'apply'
+    'calllocalnative', 'exit', 'loop', 'import', 'apply', 'applylocal'
 ]
 TOKEN_PATTERN = re.compile(
-    r'"(?:\\.|[^"\\])*"'
+    r'//[^\n]*'
+    r'|"(?:\\.|[^"\\])*"'
     r'|-?\d+(?:\.\d+)?'
     r'|[A-Za-z_]\w*'
     r'|==|!=|<=|>=|&&|\|\|'
@@ -499,7 +500,6 @@ TOKEN_PATTERN = re.compile(
     r'|[ \t]+'
     r'|\n'
     r'|.'
-    r'//[^\n]*|...'
 )
 PRECEDENCE = {
     '||': 1,
@@ -972,15 +972,17 @@ class Intepreter:
         if context is None:
             context = {}
         
+        
+        if name in GLOBAL_VAR:
+            return GLOBAL_VAR[name]
+        elif name in FUNCTIONS:
+            return FUNCTIONS[name]
+
         if self.scope != 'GLOBAL':
             if name in context:
                 return context[name]
             if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
                 return LOCAL_VAR_STACK[-1][name]
-        elif name in GLOBAL_VAR:
-            return GLOBAL_VAR[name]
-        elif name in FUNCTIONS:
-            return FUNCTIONS[name]
 
         raise NameError(f"Variable '{name}' is not defined")
     def _toInternalRepr(self, val: str):
