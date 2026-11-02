@@ -416,10 +416,10 @@ class Natives:
         Natives._push(Natives._toIntIter(itr))
     @staticmethod
     def iterextend(v):
-        extd = Natives._toPyIter(Natives._pop(v))
-        lst = Natives._toPyIter(Natives._pop(v))
-        lst.extend(extd)
-        Natives._push(Natives._toIntIter(lst))
+            extd = Natives._toPyIter(Natives._pop(v))
+            lst = Natives._toPyIter(Natives._pop(v))
+            lst.extend(extd)
+            Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def sort(v):
         try:
@@ -452,7 +452,7 @@ class Natives:
 
     @staticmethod 
     def dump(v):
-        for i in STACK:
+        for i in Natives._getStack():
             print(i)
 
     @staticmethod 
