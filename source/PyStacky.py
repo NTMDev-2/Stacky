@@ -1069,8 +1069,14 @@ class Intepreter:
                     f"Apply expects a list or tuple of arguments, "
                     f"got {type(args).__name__}"
                 )
-
-            self.evaluate(Call(node.func, list(args)))
+            if node.func in FUNCTIONS:
+                self.evaluate(Call(node.func, list(args)))
+            elif node.func in NATIVES:
+                for i in list(args):
+                    Natives._push(i)
+                self.evaluate(InvokeNative(node.func, local=isinstance(node, ApplyLocal)))
+            else:
+                raise NameError(f'Function {node.func} is not defined')
         elif isinstance(node, (Function, Import)):
             return None
         elif isinstance(node, Call):
