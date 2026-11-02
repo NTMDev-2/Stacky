@@ -1,0 +1,264 @@
+// Game of Life
+// NTMDev, Nov 1, 2026
+
+// A demonstration of Stacky's capabilities
+
+define mat [
+    [0, 1, 0, 0, 0, 0, 0, 1, 0, 0],
+    [0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+    [1, 1, 1, 0, 0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+]
+
+define ROWS 10
+define COLS 10
+
+function countNeighbors(x, y)
+    define total 0
+    define i 0
+
+    // Check the row above
+    pushlocal y
+    calllocalnative dec
+    define row poplocal
+
+    if row >= 0
+        pushlocal mat
+        pushlocal row
+        calllocalnative getelement
+
+        pushlocal x
+        calllocalnative dec
+        set i poplocal
+
+        loop
+            pushlocal [x, 2]
+            applylocal add
+            if i >= poplocal
+                exit 2
+            end
+
+            if (i >= 0) && (i < 10)
+                calllocalnative dup
+                
+                pushlocal i
+                calllocalnative getelement
+
+                if poplocal == 1
+                    pushlocal total
+                    calllocalnative inc
+                    poplocal total
+                end
+            end
+
+            pushlocal i
+            calllocalnative inc
+            poplocal i
+        end
+
+        poplocal
+    end
+
+    // Check the row below
+    pushlocal y
+    calllocalnative inc
+    set row poplocal
+
+    if row < ROWS
+        pushlocal mat
+        pushlocal row
+        calllocalnative getelement
+
+        pushlocal x
+        calllocalnative dec
+        set i poplocal
+
+        loop
+            pushlocal [x, 2]
+            applylocal add
+            if i >= poplocal
+                exit 2
+            end
+
+            if (i >= 0) && (i < ROWS)
+                calllocalnative dup
+                pushlocal i
+                calllocalnative getelement
+
+                if poplocal == 1
+                    pushlocal total
+                    calllocalnative inc
+                    poplocal total
+                end
+            end
+
+            pushlocal i
+            calllocalnative inc
+            poplocal i
+        end
+
+        poplocal
+    end
+
+    // Check the cell to the right
+    pushlocal [x, 1]
+    applylocal add
+    define col poplocal
+
+    if col < COLS
+        pushlocal [mat, y]
+        applylocal getelement
+        pushlocal col
+        calllocalnative getelement
+
+        if poplocal == 1
+            pushlocal total
+            calllocalnative inc
+            poplocal total
+        end
+    end
+
+    // Check the cell to the left
+    pushlocal [x, 1]
+    applylocal sub
+    set col poplocal
+
+    if col >= 0
+        pushlocal [mat, y]
+        applylocal getelement
+        pushlocal col
+        calllocalnative getelement
+
+        if poplocal == 1
+            pushlocal total
+            calllocalnative inc
+            poplocal total
+        end
+    end
+
+    return total
+end
+
+function staysAlive(x, y)
+    call countNeighbors x y
+    define neighbors poplocal
+
+    // Is the cell itself alive right now?
+    pushlocal [mat, y]
+    applylocal getelement
+    pushlocal x
+    calllocalnative getelement
+    define alive poplocal
+
+    // Any cell with exactly 3 neighbors lives; a living cell also survives on 2
+    if neighbors == 3
+        return true
+    end
+    if (neighbors == 2) && (alive == 1)
+        return true
+    end
+    return false
+end
+
+
+function nextGeneration()
+    define nextCells [
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    ]
+
+    define r 0
+    define c 0
+    
+    define temp null
+
+    loop
+        if r >= ROWS
+            exit 2
+        end
+
+        set c 0
+
+        loop
+            if c >= COLS
+                exit 2
+            end
+
+            call staysAlive c r
+
+            if poplocal
+                // Set cell (c, r) of nextCells to 1 (cells start out as 0)
+                pushlocal [nextCells, r]
+                applylocal getelement
+
+                set temp poplocal
+                pushlocal [temp, c, 1]
+                applylocal setelement
+
+                set temp poplocal
+                pushlocal [nextCells, r, temp]
+                applylocal setelement
+
+                set nextCells poplocal
+            end
+
+            pushlocal c
+            calllocalnative inc
+            poplocal c
+        end
+
+        pushlocal r
+        calllocalnative inc
+        poplocal r
+    end
+    setglobal mat nextCells
+
+    return nextCells
+end
+
+function printGeneration()
+    pushlocal "Generation"
+    calllocalnative printWithPop
+
+    define gen pop
+
+    pushlocal gen
+    calllocalnative iterlen
+    
+    define ROWS poplocal
+    define i 0
+
+    loop
+        if i >= ROWS
+            exit 2
+        end
+
+        pushlocal [gen, i]
+        applylocal getelement
+        
+        calllocalnative printWithPop
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
+
+loop
+    call nextGeneration
+    call printGeneration
+end
