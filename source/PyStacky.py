@@ -1,6 +1,6 @@
 import re
 import time
-import tkinter as tk
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -988,6 +988,28 @@ class Intepreter:
                 return LOCAL_VAR_STACK[-1][name]
 
         raise NameError(f"Variable '{name}' is not defined")
+
+    def _resolveList(self, internalList: list | tuple, scope: typing.Literal['local', 'global']):
+        if scope == 'local':
+            _vars = LOCAL_VAR_STACK[-1]
+        else:
+            _vars = GLOBAL_VAR
+
+        if isinstance(internalList, tuple):
+            internalList = list(internalList)
+
+        for idx, item in enumerate(internalList):
+            if isinstance(item, str) and item in _vars:
+                internalList[idx] = _vars[item]
+            elif isinstance(item, str) and item.startswith('<FunctionInstance '):
+                func_name = item[len('<FunctionInstance '):-1]
+                internalList[idx] = FUNCTIONS.get(func_name)
+            elif isinstance(item, primitive):
+                internalList[idx] = item
+            elif isinstance(item, (list, tuple)):
+                self._resolveList(item, scope)
+        
+        return internalList
     def _toInternalRepr(self, val: str):
         if isinstance(val, str) and val.startswith('<FunctionInstance '):
             func_name = val[len('<FunctionInstance '):-1]
@@ -1077,9 +1099,15 @@ class Intepreter:
             if node.func in FUNCTIONS:
                 self.evaluate(Call(node.func, list(args)))
             elif node.func in NATIVES:
-                for i in list(args):
-                    Natives._push(i)
-                self.evaluate(InvokeNative(node.func, local=isinstance(node, ApplyLocal)))
+                is_local = isinstance(node, ApplyLocal)
+                previous_local = Natives.local
+                try:
+                    Natives.local = is_local
+                    for i in self._resolveList(args,'local' if is_local else 'global'):
+                        Natives._push(self.evaluate(i, context))
+                    self.evaluate(InvokeNative(node.func, local=is_local))
+                finally:
+                    Natives.local = previous_local
             else:
                 raise NameError(f'Function {node.func} is not defined')
         elif isinstance(node, (Function, Import)):
