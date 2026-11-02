@@ -40,6 +40,7 @@ class PopLocal(Node):
 @dataclass
 class PushLocal(Node):
     value: str | object
+
 @dataclass
 class Function(Node):
     name: str
