@@ -505,7 +505,7 @@ KEYWORDS = [
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
-    r'|"(?:\\.|[^"\\])*"'
+    r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
     r'|-?\d+(?:\.\d+)?'
     r'|[A-Za-z_]\w*'
     r'|==|!=|<=|>=|&&|\|\|'
@@ -660,7 +660,7 @@ class Evaluator:
                 if context == 'valuedef':
                     context == ''
                 tokens.append(("NEWLINE", value))
-            elif value.startswith('"'):
+            elif value.startswith(('"', "'")):
                 tokens.append(("STRING", value[1:-1]))
             elif (value.isdigit() or value.startswith('-')) or (value.count(".") == 1 and value.replace(".", "").isdigit()):
                 number = float(value) if "." in value else int(value)
