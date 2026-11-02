@@ -77,7 +77,7 @@ class _Polled:
         super().destroy()
 
 class StackViewer(_Polled, tk.Tk):
-    def __init__(self, stack, interpreter):
+    def __init__(self, stack, interpreter, global_vars):
         super().__init__()
 
         self.geometry("500x450")
@@ -86,6 +86,7 @@ class StackViewer(_Polled, tk.Tk):
 
         self.stack = stack
         self.interpreter = interpreter
+        self.global_vars = global_vars
         self.root = self
         self.running = False
         self.run_after_id = None
@@ -107,6 +108,9 @@ class StackViewer(_Polled, tk.Tk):
 
         self.panel = ListPanel(self, "Global Stack")
         self.panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.panel2 = ListPanel(self, "Global Vars")
+        self.panel2.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.runButton = self._make_button("Run", self.run, "lime")
         self.stepButton = self._make_button("Step", self.step, "yellow")
@@ -131,8 +135,13 @@ class StackViewer(_Polled, tk.Tk):
         lines = [f"[{i}]: {value!r}" for i, value in enumerate(reversed(self.stack))]
         self.panel.set_title(f"Global Stack ({len(lines)})")
         self.panel.show(lines)
-    def set_status(self, text, error=False):
+        var_lines = [f"{name}: {value!r}" for name, value in self.global_vars.items()]
+        self.panel2.set_title(f"Global Vars ({len(var_lines)})")
+        self.panel2.show(var_lines)
+    def set_status(self, text, error=False, logConsole=''):
         self.status.config(text=text, fg="#ff0000" if error else "white")
+        if logConsole:
+            print(logConsole)
 
     def _do_step(self):
         try:
@@ -190,6 +199,8 @@ class StackViewer(_Polled, tk.Tk):
         try:
             action()
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             self.set_status(f"Error: {type(exc).__name__}: {exc}", error=True)
         else:
             self.set_status(done_text)
