@@ -1220,7 +1220,7 @@ class Intepreter:
             for n, frame in enumerate(reversed(self.stack_frames)):
                 if frame['type'] == 'function':
                     isFunction = True
-                    returnDepth = n + 1
+                    returnDepth = n
             if not isFunction:
                 raise RuntimeError('Return outside a function')
 
