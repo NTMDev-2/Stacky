@@ -987,9 +987,9 @@ class Evaluator:
         return nodes
 
 GLOBAL_VAR: dict[str, object] = {}
-STACK = []
+STACK: list[object] = []
 LOCAL_VAR_STACK: list[dict[str, object]] = []
-LOCAL_STACK: list[list] = []
+LOCAL_STACK: list[list[object]] = []
 
 primitive = (int, str, bool)
 class Intepreter:
@@ -1354,6 +1354,6 @@ class Intepreter:
 fileName = input('Enter file name: ')
 intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
-viewer = StackViewer(STACK, intepreter)
+viewer = StackViewer(STACK, intepreter, GLOBAL_VAR)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
 viewer._mainloop()
