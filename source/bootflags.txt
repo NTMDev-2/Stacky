@@ -1,1 +1,3 @@
-
+# Custom flags to use when launching PyStacky. Check documentation for a list of all avaliable flags. 
+# Bootflags should be in this form:
+# <flagname> = <value>
