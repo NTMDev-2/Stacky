@@ -1,0 +1,49 @@
+function mapunpack(mp)
+    pushlocal mp
+    calllocalnative dup
+    calllocalnative dictkeys
+
+    define KEYS poplocal
+    calllocalnative dictvalues
+    define VALS poplocal
+
+    define i 0
+    define x []
+
+    loop
+        pushlocal KEYS
+        calllocalnative iterlen
+        if i >= poplocal
+            pushlocal x
+            calllocalnative totuple
+            poplocal x
+            push x
+            exit 3
+        end
+
+        pushlocal VALS
+        pushlocal i
+        calllocalnative getelement
+
+        pushlocal KEYS
+        pushlocal i
+        calllocalnative getelement
+
+
+        pushlocal []
+        calllocalnative swap
+        calllocalnative iterappend
+        calllocalnative swap
+        calllocalnative iterappend
+
+        calllocalnative totuple
+        pushlocal x
+        calllocalnative swap
+        calllocalnative iterappend
+        poplocal x
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
