@@ -1,4 +1,5 @@
 import re
+import subprocess
 import time
 import typing
 from dataclasses import dataclass, field
@@ -210,6 +211,8 @@ class Natives:
     @staticmethod
     def _push(value):
         Natives._getStack().append(value)
+        if len(Natives._getStack()) > ((Config.MAX_STACK_DEPTH if not Natives.local else Config.MAX_LOCAL_STACK_DEPTH) or float('inf')):
+            raise RuntimeError("Maximum stack depth exceeded")
     @staticmethod
     def _toPyIter(value):
         if isinstance(value, (list, tuple, dict)):
@@ -228,7 +231,7 @@ class Natives:
             return str.__str__(item)
         if isinstance(item, str):
             escaped = (item.replace('\\', '\\\\').replace('"', '\\"')
-                           .replace('\n', '\\n').replace('\t', '\\t'))
+                            .replace('\n', '\\n').replace('\t', '\\t'))
             return f'"{escaped}"'
         if isinstance(item, float):
             return repr(item)
@@ -305,6 +308,7 @@ class Natives:
         b = Natives._pop(v)
         Natives._push(a)
         Natives._push(b)
+
     @staticmethod
     def over(v):
         Natives._push(Natives._getStack()[-2])
@@ -332,11 +336,15 @@ class Natives:
     @staticmethod
     def pick(v):
         n = Natives._pop(v)
+        if len(Natives._getStack()) <= n:
+            raise RuntimeError("Index out of bounds")
         Natives._push(Natives._getStack()[-1 - n])
     @staticmethod
     def roll(v):
         n = Natives._pop(v)
         stack = Natives._getStack()
+        if len(stack) <= n:
+            raise RuntimeError("Index out of bounds")
         stack[-1 - n], stack[-1] = stack[-1], stack[-1 - n]
 
     @staticmethod
@@ -375,9 +383,9 @@ class Natives:
 
     @staticmethod
     def strconcat(v):
-        a = Natives._pop(v)
-        b = Natives._pop(v)
-        Natives._push(str(b) + str(a))
+            a = Natives._pop(v)
+            b = Natives._pop(v)
+            Natives._push(str(b) + str(a))
     @staticmethod
     def strlen(v):
         Natives._push(len(Natives._pop(v)))
@@ -409,6 +417,8 @@ class Natives:
         val = Natives._coerce(Natives._pop(v))
         lst = Natives._toPyIter(Natives._pop(v))
         lst.append(val)
+        if len(lst) > (Config.MAX_ITERABLE_SIZE or float('inf')):
+            raise RuntimeError("Maximum iterable size exceeded")
         Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def iterclear(v):
@@ -427,6 +437,8 @@ class Natives:
             extd = Natives._toPyIter(Natives._pop(v))
             lst = Natives._toPyIter(Natives._pop(v))
             lst.extend(extd)
+            if len(lst) > (Config.MAX_ITERABLE_SIZE or float('inf')):
+                raise RuntimeError("Maximum iterable size exceeded")
             Natives._push(Natives._toIntIter(lst))
     @staticmethod
     def sort(v):
@@ -481,6 +493,9 @@ class Natives:
         key = Natives._pop(v)
         dct = Natives._toPyIter(Natives._pop(v))
         dct[key] = val
+
+        if len(dct) > (Config.MAX_ITERABLE_SIZE or float('inf')):
+            raise RuntimeError("Maximum iterable size exceeded")
         Natives._pushElement(v, dct)
     @staticmethod 
     def dictkeys(v):
@@ -490,6 +505,7 @@ class Natives:
     def dictvalues(v):
         dct = Natives._toPyIter(Natives._pop(v))
         Natives._pushElement(v, list(dct.values()))
+
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
@@ -991,6 +1007,39 @@ LOCAL_VAR_STACK: list[dict[str, object]] = []
 LOCAL_STACK: list[list[object]] = []
 
 primitive = (int, str, bool)
+class Config:
+    MAX_RECURSION_DEPTH: int | None = None
+    MAX_STACK_DEPTH: int | None = None
+    MAX_LOCAL_STACK_DEPTH: int | None = None
+    MAX_STACK_FRAMES: int | None = None
+    MAX_INSTRUCTION_COUNT: int | None = None
+    MAX_ITERABLE_SIZE: int | None = None
+    DEBUG: bool = False
+    NO_NATIVE: bool = False
+    PRINT_ON_LAUNCH: str = ''
+    CLEAR_ON_RERUN: bool = False
+
+with open(BASE_DIR / 'bootflags.txt', 'r') as f:
+    config_lines = f.readlines()
+for line in config_lines:
+    if not line or line.startswith('#'):
+        continue
+    if '=' not in line:
+        print('Read through a bootflag without an assignment:', line)
+        continue
+    key, value = line.split('=', 1)
+    key = key.strip().upper()
+    value = value.strip()
+    if hasattr(Config, key):
+        attr_type = type(getattr(Config, key))
+        if attr_type is bool:
+            setattr(Config, key, value.lower() == 'true')
+        elif attr_type is int:
+            setattr(Config, key, int(value))
+        else:
+            setattr(Config, key, value)
+    print(f"Bootflag {key} set to {getattr(Config, key)}")
+step_counter = 0
 class Intepreter:
     def __init__(self, prog: Program):
         self.prog = prog
@@ -1004,10 +1053,17 @@ class Intepreter:
 
         self.currentnode = None
 
-    def getVar(self, name, context=None):
+    def getVar(self, name, context=None, precedence='global'):
         if context is None:
             context = {}
+
         
+        if precedence == 'local' and self.scope != 'GLOBAL':
+            if name in context:
+                return context[name]
+            if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
+                return LOCAL_VAR_STACK[-1][name]
+
         if name in GLOBAL_VAR:
             return GLOBAL_VAR[name]
         elif name in FUNCTIONS:
@@ -1044,18 +1100,28 @@ class Intepreter:
             else:
                 raise ValueError(f"Unsupported item type in list: {type(item)}")
         return internalList
-    def _toInternalRepr(self, val: str):
+    def _toInternalRepr(self, val: int | str | bool | list | tuple | dict):
         if isinstance(val, str) and val.startswith('<FunctionInstance '):
             func_name = val[len('<FunctionInstance '):-1]
             return FUNCTIONS.get(func_name)
         return val
+    def _pushStackFrame(self, info: dict):
+        if len(self.stack_frames) >= (Config.MAX_STACK_FRAMES or float('inf')):
+            raise RuntimeError("Stackverflow: maximum stack frames exceeded")
+        self.stack_frames.append(info)
+    
     def evaluate(self, node, context: dict[str, object] = {}):
+        if Config.DEBUG:
+            global step_counter
+            step_counter += 1
+            print(f"Step {step_counter}: {node} (Scope: {self.scope})")
+
         if isinstance(node, Literal):
             return node.val
         elif isinstance(node, primitive):
             return node
         elif isinstance(node, Variable):
-            return self.getVar(node.name, context)
+            return self.getVar(node.name, context, precedence='local' if self.scope != 'GLOBAL' else 'global')
         elif isinstance(node, CollectionLiteral):
             def popItem(name):
                 if name == 'poplocal':
@@ -1094,10 +1160,22 @@ class Intepreter:
                 raise NameError(f"Variable '{node.name}' is not defined")
             GLOBAL_VAR[node.name] = value
         elif isinstance(node, Push):
+            if len(STACK) >= (Config.MAX_STACK_DEPTH or float('inf')):
+                raise RuntimeError("Stackverflow: maximum stack depth exceeded")
             val = self.evaluate(node.value, context)
             if isinstance(val, Function):
                 val = f'<FunctionInstance {val.name}>'
             STACK.append(val)
+        elif isinstance(node, PushLocal):
+            if len(LOCAL_STACK[-1]) >= (Config.MAX_LOCAL_STACK_DEPTH or float('inf')):
+                raise RuntimeError("Stackverflow: maximum local stack depth exceeded")
+
+            if self.scope == 'GLOBAL':
+                raise RuntimeError('PushLocal without a scope')
+            val = self.evaluate(node.value, context)
+            if isinstance(val, Function):
+                val = f'<FunctionInstance {val.name}>'
+            LOCAL_STACK[-1].append(val)
         elif isinstance(node, Pop):
             if node.varOptional is not None:
                 if node.varOptional in context:
@@ -1110,25 +1188,19 @@ class Intepreter:
                     raise NameError(f"Variable '{node.varOptional}' is not defined")
             else:
                 return self._toInternalRepr(STACK.pop())
-        elif isinstance(node, PushLocal):
-            if self.scope == 'GLOBAL':
-                raise RuntimeError('PushLocal without a scope')
-            val = self.evaluate(node.value, context)
-            if isinstance(val, Function):
-                val = f'<FunctionInstance {val.name}>'
-            LOCAL_STACK[-1].append(val)
         elif isinstance(node, PopLocal):
             if self.scope == 'GLOBAL':
                 raise RuntimeError('PopLocal without a scope')
             if node.varOptional is not None:
                 if node.varOptional in context:
                     context[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
-                elif node.varOptional in GLOBAL_VAR:
-                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
                 elif node.varOptional in LOCAL_VAR_STACK[-1]:
                     LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+                elif node.varOptional in GLOBAL_VAR:
+                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+
             else:
-                return self._toInternalRepr(LOCAL_STACK[-1].pop())  
+                return self._toInternalRepr(LOCAL_STACK[-1].pop())
         elif isinstance(node, (Apply, ApplyLocal)):
             if isinstance(node, ApplyLocal):
                 raw_args = LOCAL_STACK[-1].pop()
@@ -1175,7 +1247,7 @@ class Intepreter:
             LOCAL_STACK.append([])
             self.scopes_stack.append(node.func)
 
-            self.stack_frames.append({
+            self._pushStackFrame({
                 'type': 'function',
                 "body": func.body,
                 "index": 0,
@@ -1186,6 +1258,9 @@ class Intepreter:
 
             self.scope = node.func
         elif isinstance(node, InvokeNative):
+            if Config.NO_NATIVE:
+                raise RuntimeError('Native functions are disabled via boot configs')
+
             if node.name not in NATIVES:
                 raise NameError(f'The native function, {node.name}, does not exist')
             if node.local and self.scope == 'GLOBAL':
@@ -1227,7 +1302,7 @@ class Intepreter:
         elif isinstance(node, If):
             for condition, body in node.branches:
                 if condition is True or self.evaluate(condition, context):
-                    self.stack_frames.append({
+                    self._pushStackFrame({
                         'type': 'if',
                         'body': body,
                         'index': 0,
@@ -1240,7 +1315,7 @@ class Intepreter:
                 raise RuntimeError('Exit without a stackframe')
             self.finish_frame(node.depth)
         elif isinstance(node, Loop):
-            self.stack_frames.append({
+            self._pushStackFrame({
                 'type': 'loop',
                 'body': node.body,
                 'index': 0,
@@ -1320,6 +1395,12 @@ class Intepreter:
             self.scope = frame["scope"]
             self.evaluate(node, frame["context"])
             return True
+        global step_counter
+        if step_counter >= (Config.MAX_INSTRUCTION_COUNT or float('inf')):
+            raise RuntimeError("Maximum instruction step exceeded")
+        
+        step_counter += 1
+        
         node = self.advance()
 
         if node is None:
@@ -1328,11 +1409,14 @@ class Intepreter:
         self.evaluate(node)
         return True
     def run(self):
+        if Config.CLEAR_ON_RERUN:
+            subprocess.run('cls', shell=True)
         while self.step():
             pass
-
+        print(f'Finished program in {step_counter} steps')
     def rerun(self, go=True):
-        global IMPORTED_FILES, IMPORTING_FILES
+        global IMPORTED_FILES, IMPORTING_FILES, step_counter
+        step_counter = 0
         STACK.clear()
         LOCAL_STACK.clear()
         LOCAL_VAR_STACK.clear()
@@ -1341,6 +1425,10 @@ class Intepreter:
         self.scopes_stack.clear()
         self.scope = 'GLOBAL'
         self.pos = -1
+
+        if Config.CLEAR_ON_RERUN:
+            subprocess.run('cls', shell=True)
+
         if go:
             self.run()
     def reloadFile(self):
@@ -1351,6 +1439,8 @@ class Intepreter:
         self.rerun()
 
 fileName = input('Enter file name: ')
+if Config.PRINT_ON_LAUNCH:
+    print(Config.PRINT_ON_LAUNCH)
 intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
 viewer = StackViewer(STACK, intepreter, GLOBAL_VAR)
