@@ -167,7 +167,7 @@ class _CollectionReader:
         while self.pos < len(self.text):
             ch = self.text[self.pos]
             self.pos += 1
-            if ch == '"':
+            if ch in ['"', "'"]:
                 return ''.join(out)
             if ch == '\\' and self.pos < len(self.text):
                 nxt = self.text[self.pos]
@@ -740,7 +740,6 @@ class Evaluator:
             return Literal(tok[1], line=self.line)
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             prefix = tok[0][0]
-            # Dry run: does the collection contain pop/poplocal?
             found_pop = []
             def noteMarker(name):
                 found_pop.append(name)
