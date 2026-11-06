@@ -509,6 +509,17 @@ class Natives:
         dct = Natives._toPyIter(Natives._pop(v))
         Natives._pushElement(v, list(dct.values()))
 
+    @staticmethod
+    def sleep(v):
+        seconds = Natives._pop(v)
+        if not isinstance(seconds, (int, float)):
+            raise TypeError("sleep expects a number of seconds")
+        time.sleep(seconds)
+    @staticmethod
+    def raiseerror(v):
+        message = Natives._pop(v)
+        raise RuntimeError(message)
+
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
