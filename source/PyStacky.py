@@ -1048,6 +1048,7 @@ class Config:
 
     STOP_AT_STEP: int | None = None
     EXECUTION_MS_LIMIT: int = 5
+    PROFILE_FUNCTIONS: bool = False
 
     AUTO_FILE: str = ''
     ALLOW_MANUAL_FLAG_ENTRY: bool = False
@@ -1098,6 +1099,7 @@ if Config.ALLOW_MANUAL_FLAG_ENTRY:
         except Exception as e:
             print(f"Error parsing bootflag: {e}")
 
+FUNCTION_PROF_START: float = 0
 class Interpreter:
     def __init__(self, prog: Program):
         self.prog = prog
@@ -1196,7 +1198,7 @@ class Interpreter:
                 variables = GLOBAL_VAR
             else:
                 variables = LOCAL_VAR_STACK[-1]
-            if len(variables) >= (Config.MAX_LOCAL_VARIABLES if self.scope != 'GLOBAL' else Config.MAX_VARIABLES or float('inf')):
+            if len(variables) >= ((Config.MAX_LOCAL_VARIABLES if self.scope != 'GLOBAL' else Config.MAX_VARIABLES) or float('inf')):
                 raise RuntimeError(f"Maximum number of variables exceeded in the scope {self.scope}")
 
             if node.name in variables or node.name in FUNCTIONS:
@@ -1321,13 +1323,16 @@ class Interpreter:
                 for frame in self.stack_frames
                 if frame['type'] == 'function'
             ]
+
             if Config.NO_RECURSION and node.func in active_functions:
                 raise RuntimeError(f"Recursion is disabled via bootflag, but function '{node.func}' was called recursively")
-            
             if len(active_functions) >= Config.MAX_RECURSION_DEPTH:
                 raise RuntimeError(
                     f"Maximum recursion depth ({Config.MAX_RECURSION_DEPTH}) exceeded"
                 )
+            if Config.PROFILE_FUNCTIONS:
+                global FUNCTION_PROF_START
+                FUNCTION_PROF_START = time.time()
 
             self._pushStackFrame({
                 'type': 'function',
@@ -1462,6 +1467,13 @@ class Interpreter:
                         STACK.append(return_value)
                     else:
                         LOCAL_STACK[-1].append(return_value)
+
+            if self.scope == 'GLOBAL':
+                FUNCTION_PROF_END = time.time()
+                if Config.PROFILE_FUNCTIONS and frame['type'] == 'function':
+                    func_name = frame['scope']
+                    elapsed_time = FUNCTION_PROF_END - FUNCTION_PROF_START
+                    print(f"Function '{func_name}' and its related calls finished in {round(1000*elapsed_time, 2)}ms")
     def step(self):
         if self.stack_frames:
             frame = self.stack_frames[-1]
