@@ -753,6 +753,10 @@ class Evaluator:
         elif tok[0] in ('NUMBER', 'STRING'):
             if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
                 raise RuntimeError("Illegal expression")
+            if tok[0] == 'STRING' and len(str(tok[1])) > (Config.MAX_STRING_SIZE or float('inf')):
+                raise RuntimeError("Maximum string length exceeded")
+            if tok[0] == 'NUMBER' and Config.MAX_INTEGER is not None and abs(int(tok[1])) > Config.MAX_INTEGER:
+                    raise RuntimeError("Maximum integer value exceeded") 
             return Literal(tok[1], line=self.line)
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             prefix = tok[0][0]
@@ -892,6 +896,9 @@ class Evaluator:
                     return Apply(func, line=self.line)
                 return ApplyLocal(func, line=self.line)
             elif keywordtok == 'function':
+                if Config.NO_FUNCTIONS:
+                    raise RuntimeError("Function definitions are disabled by bootflag")
+
                 name = self.advance()[1]
                 if self.advance()[1] != '(':
                     raise SyntaxError("Expected '(' after function name")
@@ -1008,20 +1015,31 @@ LOCAL_STACK: list[list[object]] = []
 
 primitive = (int, str, bool)
 class Config:
-    MAX_RECURSION_DEPTH: int | None = None
+    MAX_RECURSION_DEPTH: int = 1024
     MAX_STACK_DEPTH: int | None = None
     MAX_LOCAL_STACK_DEPTH: int | None = None
     MAX_STACK_FRAMES: int | None = None
     MAX_INSTRUCTION_COUNT: int | None = None
     MAX_ITERABLE_SIZE: int | None = None
+    MAX_STRING_SIZE: int | None = None
+    MAX_INTEGER: int = 2**64
+
     DEBUG: bool = False
     NO_NATIVE: bool = False
+    NO_FUNCTIONS: bool = False
     PRINT_ON_LAUNCH: str = ''
     CLEAR_ON_RERUN: bool = False
 
+    STOP_AT_STEP: int | None = None
+    EXECUTION_MS_LIMIT: int = 5
+
+    AUTO_LOAD_FILE: str = ''
+
 with open(BASE_DIR / 'bootflags.txt', 'r') as f:
     config_lines = f.readlines()
+_start_config = time.time()
 for line in config_lines:
+    line = line.replace('-', '_')
     if not line or line.startswith('#'):
         continue
     if '=' not in line:
@@ -1038,8 +1056,13 @@ for line in config_lines:
             setattr(Config, key, int(value))
         else:
             setattr(Config, key, value)
+    else:
+        raise ValueError(f"Unknown bootflag: {key}")
     print(f"Bootflag {key} set to {getattr(Config, key)}")
+_end_config = time.time()
+print(f"All bootflags loaded in {round(1000*(_end_config-_start_config),2)}ms")
 step_counter = 0
+
 class Intepreter:
     def __init__(self, prog: Program):
         self.prog = prog
@@ -1247,6 +1270,16 @@ class Intepreter:
             LOCAL_STACK.append([])
             self.scopes_stack.append(node.func)
 
+            active_functions = [
+                frame['scope']
+                for frame in self.stack_frames
+                if frame['type'] == 'function'
+            ]
+            if len(active_functions) >= Config.MAX_RECURSION_DEPTH:
+                raise RuntimeError(
+                    f"Maximum recursion depth ({Config.MAX_RECURSION_DEPTH}) exceeded"
+                )
+
             self._pushStackFrame({
                 'type': 'function',
                 "body": func.body,
@@ -1399,6 +1432,9 @@ class Intepreter:
         if step_counter >= (Config.MAX_INSTRUCTION_COUNT or float('inf')):
             raise RuntimeError("Maximum instruction step exceeded")
         
+        if Config.STOP_AT_STEP is not None and step_counter >= Config.STOP_AT_STEP:
+            raise StopIteration(f"Execution stopped at step {Config.STOP_AT_STEP}")
+
         step_counter += 1
         
         node = self.advance()
@@ -1438,11 +1474,11 @@ class Intepreter:
         self.nodes = self.prog.nodes
         self.rerun()
 
-fileName = input('Enter file name: ')
+fileName = (Config.AUTO_LOAD_FILE[1:-1] if Config.AUTO_LOAD_FILE else input('Enter file name: '))
 if Config.PRINT_ON_LAUNCH:
     print(Config.PRINT_ON_LAUNCH)
 intepreter = Intepreter(Program(Evaluator(fileName).parse()))
 
-viewer = StackViewer(STACK, intepreter, GLOBAL_VAR)
+viewer = StackViewer(STACK, intepreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
 viewer._mainloop()
