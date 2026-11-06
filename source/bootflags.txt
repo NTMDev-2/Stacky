@@ -1,4 +1,7 @@
 # Custom flags to use when launching PyStacky. Check documentation for a list of all avaliable flags. 
 # Bootflags should be in this form:
 # <flagname> = <value>
-clear_on_rerun = true
+
+# Note: it is suggested to use hyphens instead of underscores. 
+
+clear-on-launch = true
