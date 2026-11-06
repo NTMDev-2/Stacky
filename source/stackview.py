@@ -1,7 +1,6 @@
 import tkinter as tk
 
 REFRESH_MS = 5
-RUN_STEP_MS = 5
 
 HEADER_FONT = ("Consolas", 12, "italic", "bold")
 LIST_FONT = ("Consolas", 12, "bold")
@@ -77,13 +76,16 @@ class _Polled:
         super().destroy()
 
 class StackViewer(_Polled, tk.Tk):
-    def __init__(self, stack, interpreter, global_vars):
+    def __init__(self, stack, interpreter, global_vars, RUN_STEP_MS):
         super().__init__()
 
         self.geometry("500x450")
         self.minsize(400, 300)
         self.title("Stacky")
 
+        self.RUN_STEP_MS = RUN_STEP_MS
+        if self.RUN_STEP_MS < REFRESH_MS:
+            print('Warning: RUN_STEP_MS is less than REFRESH_MS, which may cause performance issues')
         self.stack = stack
         self.interpreter = interpreter
         self.global_vars = global_vars
@@ -181,7 +183,7 @@ class StackViewer(_Polled, tk.Tk):
         result = self._do_step()
         self.refresh()
         if result == "ok":
-            self.run_after_id = self.after(RUN_STEP_MS, self._run_step)
+            self.run_after_id = self.after(self.RUN_STEP_MS, self._run_step)
     def pause(self):
         self.pause_quietly()
         self.runButton.config(text="Run")
