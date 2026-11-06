@@ -899,6 +899,9 @@ class Evaluator:
                 if Config.NO_FUNCTIONS:
                     raise RuntimeError("Function definitions are disabled by bootflag")
 
+                if len(FUNCTIONS) >= (Config.MAX_FUNCTIONS or float('inf')):
+                    raise RuntimeError("Maximum number of functions exceeded")
+
                 name = self.advance()[1]
                 if self.advance()[1] != '(':
                     raise SyntaxError("Expected '(' after function name")
@@ -1019,51 +1022,83 @@ class Config:
     MAX_STACK_DEPTH: int | None = None
     MAX_LOCAL_STACK_DEPTH: int | None = None
     MAX_STACK_FRAMES: int | None = None
+    
     MAX_INSTRUCTION_COUNT: int | None = None
+    MAX_FUNCTIONS: int | None = None
+    MAX_VARIABLES: int | None = None
+    MAX_LOCAL_VARIABLES: int | None = None
+    
     MAX_ITERABLE_SIZE: int | None = None
     MAX_STRING_SIZE: int | None = None
     MAX_INTEGER: int = 2**64
 
     DEBUG: bool = False
-    NO_NATIVE: bool = False
+
+    NO_NATIVES: bool = False
     NO_FUNCTIONS: bool = False
+    NO_IMPORTS: bool = False
+    NO_RECURSION: bool = False
+    NO_LOOP: bool = False
+    NO_VAR_REDEFINE: bool = False
+
     PRINT_ON_LAUNCH: str = ''
-    CLEAR_ON_RERUN: bool = False
+    CLEAR_ON_LAUNCH: bool = False
+    DUMP_AST: bool = False
+    DUMP_FUNCTIONS: bool = False
 
     STOP_AT_STEP: int | None = None
     EXECUTION_MS_LIMIT: int = 5
 
-    AUTO_LOAD_FILE: str = ''
+    AUTO_FILE: str = ''
+    ALLOW_MANUAL_FLAG_ENTRY: bool = False
 
 with open(BASE_DIR / 'bootflags.txt', 'r') as f:
     config_lines = f.readlines()
-_start_config = time.time()
-for line in config_lines:
+
+def parseKey(line: str):
     line = line.replace('-', '_')
-    if not line or line.startswith('#'):
-        continue
-    if '=' not in line:
-        print('Read through a bootflag without an assignment:', line)
-        continue
     key, value = line.split('=', 1)
     key = key.strip().upper()
     value = value.strip()
     if hasattr(Config, key):
-        attr_type = type(getattr(Config, key))
+        attr = getattr(Config, key)
+        attr_type = type(attr)
         if attr_type is bool:
             setattr(Config, key, value.lower() == 'true')
         elif attr_type is int:
             setattr(Config, key, int(value))
         else:
             setattr(Config, key, value)
+        if getattr(Config, key) == attr:
+            print(f'Nothing changed. {key} was already set to {attr}')
+            return
     else:
         raise ValueError(f"Unknown bootflag: {key}")
     print(f"Bootflag {key} set to {getattr(Config, key)}")
+_start_config = time.time()
+for line in config_lines:
+    if not line or line.startswith('#'):
+        continue
+    if '=' not in line:
+        print('Read through a bootflag without an assignment:', line)
+        continue
+    parseKey(line)
 _end_config = time.time()
 print(f"All bootflags loaded in {round(1000*(_end_config-_start_config),2)}ms")
 step_counter = 0
 
-class Intepreter:
+if Config.ALLOW_MANUAL_FLAG_ENTRY:
+    print("Manual bootflag entry enable. Newline to finish")
+    while True:
+        user_input = input("Enter bootflag (KEY=VALUE): ")
+        if user_input.lower().isspace() or not user_input:
+            break
+        try:
+            parseKey(user_input)
+        except Exception as e:
+            print(f"Error parsing bootflag: {e}")
+
+class Interpreter:
     def __init__(self, prog: Program):
         self.prog = prog
         self.running = False
@@ -1161,14 +1196,23 @@ class Intepreter:
                 variables = GLOBAL_VAR
             else:
                 variables = LOCAL_VAR_STACK[-1]
+            if len(variables) >= (Config.MAX_LOCAL_VARIABLES if self.scope != 'GLOBAL' else Config.MAX_VARIABLES or float('inf')):
+                raise RuntimeError(f"Maximum number of variables exceeded in the scope {self.scope}")
+
             if node.name in variables or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
             variables[node.name] = self.evaluate(node.value, context)
         elif isinstance(node, DefineGlobalVar):
             if node.name in GLOBAL_VAR or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
+
+            if len(GLOBAL_VAR) >= (Config.MAX_VARIABLES or float('inf')):
+                raise RuntimeError("Maximum number of global variables exceeded")
             GLOBAL_VAR[node.name] = self.evaluate(node.value, context)
         elif isinstance(node, SetVar):
+            if Config.NO_VAR_REDEFINE:
+                raise RuntimeError("Variable redefinition is disabled by bootflag")
+
             value = self.evaluate(node.newValue, context)
 
             if self.scope != 'GLOBAL' and node.name in LOCAL_VAR_STACK[-1]:
@@ -1178,6 +1222,8 @@ class Intepreter:
             else:
                 raise NameError(f"Variable '{node.name}' is not defined")
         elif isinstance(node, SetGlobalVar):
+            if Config.NO_VAR_REDEFINE:
+                raise RuntimeError("Variable redefinition is disabled by bootflag")
             value = self.evaluate(node.newValue, context)
             if node.name not in GLOBAL_VAR:
                 raise NameError(f"Variable '{node.name}' is not defined")
@@ -1275,6 +1321,9 @@ class Intepreter:
                 for frame in self.stack_frames
                 if frame['type'] == 'function'
             ]
+            if Config.NO_RECURSION and node.func in active_functions:
+                raise RuntimeError(f"Recursion is disabled via bootflag, but function '{node.func}' was called recursively")
+            
             if len(active_functions) >= Config.MAX_RECURSION_DEPTH:
                 raise RuntimeError(
                     f"Maximum recursion depth ({Config.MAX_RECURSION_DEPTH}) exceeded"
@@ -1291,7 +1340,7 @@ class Intepreter:
 
             self.scope = node.func
         elif isinstance(node, InvokeNative):
-            if Config.NO_NATIVE:
+            if Config.NO_NATIVES:
                 raise RuntimeError('Native functions are disabled via boot configs')
 
             if node.name not in NATIVES:
@@ -1348,6 +1397,9 @@ class Intepreter:
                 raise RuntimeError('Exit without a stackframe')
             self.finish_frame(node.depth)
         elif isinstance(node, Loop):
+            if Config.NO_LOOP:
+                raise RuntimeError('Loop statements are disabled via bootflag')
+
             self._pushStackFrame({
                 'type': 'loop',
                 'body': node.body,
@@ -1445,7 +1497,7 @@ class Intepreter:
         self.evaluate(node)
         return True
     def run(self):
-        if Config.CLEAR_ON_RERUN:
+        if Config.CLEAR_ON_LAUNCH:
             subprocess.run('cls', shell=True)
         while self.step():
             pass
@@ -1462,7 +1514,7 @@ class Intepreter:
         self.scope = 'GLOBAL'
         self.pos = -1
 
-        if Config.CLEAR_ON_RERUN:
+        if Config.CLEAR_ON_LAUNCH:
             subprocess.run('cls', shell=True)
 
         if go:
@@ -1474,11 +1526,20 @@ class Intepreter:
         self.nodes = self.prog.nodes
         self.rerun()
 
-fileName = (Config.AUTO_LOAD_FILE[1:-1] if Config.AUTO_LOAD_FILE else input('Enter file name: '))
+fileName = (Config.AUTO_FILE[1:-1] if Config.AUTO_FILE else input('Enter file name: '))
 if Config.PRINT_ON_LAUNCH:
     print(Config.PRINT_ON_LAUNCH)
-intepreter = Intepreter(Program(Evaluator(fileName).parse()))
+interpreter = Interpreter(Program(Evaluator(fileName).parse()))
 
-viewer = StackViewer(STACK, intepreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
-localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, intepreter)
+if Config.DUMP_AST:
+    print('Dumping AST:')
+    for node in interpreter.nodes:
+        print(node)
+if Config.DUMP_FUNCTIONS:
+    print('Dumping functions:')
+    for func in FUNCTIONS:
+        print(func)
+
+viewer = StackViewer(STACK, interpreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
+localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, interpreter)
 viewer._mainloop()
