@@ -95,6 +95,9 @@ class BlockExit(Node):
 @dataclass
 class Loop(Node):
     body: list
+@dataclass 
+class Continue(Node):
+    pass
 
 @dataclass
 class Import(Node):
@@ -517,7 +520,7 @@ KEYWORDS = [
     'function', 'end', 'call', 'set', 'setglobal', 
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
     'calllocalnative', 'exit', 'loop', 'import', 
-    'apply', 'applylocal', 'return'
+    'apply', 'applylocal', 'return', 'continue'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -982,6 +985,9 @@ class Evaluator:
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     value = self.parseExpression()
                 return Return(value, line=self.line)
+            elif keywordtok == 'continue':
+                return Continue(line=self.line)
+
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
@@ -1432,6 +1438,17 @@ class Interpreter:
             frame['has_return_value'] = node.value is not None
             frame['index'] = len(frame['body'])
             self.finish_frame(returnDepth)
+        elif isinstance(node, Continue):
+            isLoop = False
+            for n, frame in enumerate(reversed(self.stack_frames)):
+                if frame['type'] == 'loop':
+                    isLoop = True
+                    continueDepth = n + 1
+                    break
+            if not isLoop:
+                raise RuntimeError('Continue outside a loop')
+            frame = self.stack_frames[-continueDepth]
+            frame['index'] = 0
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
