@@ -145,14 +145,13 @@ class StackViewer(_Polled, tk.Tk):
         if logConsole:
             print(logConsole)
 
-    def _do_step(self):
+    def _do_step(self) -> str:
         try:
             more = self.interpreter.step()
         except Exception as exc:
-            import traceback
-            traceback.print_exc()
             self.pause()
-            self.set_status(f"Error: {type(exc).__name__}: {exc} at line {self.interpreter.nodes[self.interpreter.pos].line}", error=True)
+            self.set_status(f"Error: {type(exc).__name__}. Check the console for details.", error=True)
+            self.interpreter._requestTraceback(exc)
             return "error"
 
         if not more:
