@@ -1,6 +1,7 @@
 import re
 import subprocess
 import time
+import traceback
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,7 @@ class Function(Node):
     name: str
     args: list[str]
     body: list
+    defaults: dict[str, object] = field(default_factory=dict)
 @dataclass
 class BlockEnd(Node):
     pass
@@ -589,7 +591,22 @@ class Evaluator:
 
         self.package = package
         self.tokens: list[tuple[str, str]] = []
-        self.lex()
+        try:
+            self.lex()
+        except Exception as e:
+            print(f"""
+Lexer Error
+Line: {self.line}, Column: {self.col}
+
+Error: 
+[{type(e).__name__}] {e}
+            """)
+            print(self._plaintext.splitlines()[self.line - 1])
+            print(' ' * (self.col - 1) + '^')
+            if Config.SHOW_PYTHON_TRACEBACK:
+                traceback.print_exc()
+
+            raise SystemExit(1)
     def lex(self):
         chars = []
         in_string = False
@@ -646,7 +663,7 @@ class Evaluator:
                 pos = match.end()
 
                 if context in ('funcdef', 'ifdef'):
-                    tokens.append(('PUNCTUATION', value))
+                    tokens.append(('PUNCTUATION', value, self.col))
                     continue
 
                 if value == '[':
@@ -690,6 +707,7 @@ class Evaluator:
                 body = self.source[match.end():pos - 1]
                 if value == '(' and not has_top_level_comma and body.strip():
                     tokens.append(('PUNCTUATION', value, self.col))
+                    self.col = self.col
                     continue
 
                 if Config.NO_ITERABLE:
@@ -714,6 +732,8 @@ class Evaluator:
                 tokens.append(("NEWLINE", value, self.col))
             elif value.startswith(('"', "'")):
                 tokens.append(("STRING", value[1:-1], self.col))
+            elif value == '=' and context == 'funcdef':
+                tokens.append(("OPERATOR", value, self.col))
             elif (value.isdigit() or value.startswith('-')) or (value.count(".") == 1 and value.replace(".", "").isdigit()):
                 number = float(value) if "." in value else int(value)
                 tokens.append(("NUMBER", number, self.col))
@@ -887,12 +907,13 @@ class Evaluator:
             branches.append((True, body)) # Just pass a primitive True, so it will run if everything else fails
 
         if not self.peek() or self.peek() != ('KEYWORD', 'end'):
-            raise SyntaxError("Expected 'end' to close if statement" f" Line {self.line}, Column {tok[2]}")
+            raise SyntaxError("Expected 'end' to close if statement")
 
         self.advance()
         return If(branches, line=self.line, col=tok[2])
     def parseStatement(self):
         tok = self.advance()
+        self.col = tok[2]
         if Config.DEBUG_PARSER:
             print('Parsed token:', tok)
         if tok[0] == 'KEYWORD':
@@ -947,12 +968,23 @@ class Evaluator:
                     raise SyntaxError("Expected '(' after function name")
 
                 args = []
+                defaults = dict()
                 while self.peek() and self.peek()[1] != ')':
                     arg = self.advance()
                     if arg[0] == 'IDENTIFIER':
                         args.append(arg[1])
+                        if args[-1] in args[:-1]:
+                            raise SyntaxError("Duplicate argument name")
+                    elif arg[1] == '=':
+                        if args[-1] in defaults:
+                            raise SyntaxError("Duplicate default value for argument")
+                        if self.tokens[self.pos-2][0] != 'IDENTIFIER':
+                            raise SyntaxError("Expected argument name before default value")
+
+                        value = self.parseSingular()
+                        defaults[args[-1]] = value
                     elif arg[1] != ',':
-                        raise SyntaxError("Expected argument name or ','")
+                        raise SyntaxError("Unexpected token in function arguments")
 
                 if not self.peek():
                     raise SyntaxError("Expected ')' after function arguments")
@@ -964,7 +996,7 @@ class Evaluator:
                     raise SyntaxError(f"Function '{name}' is missing 'end'")
 
                 self.advance()
-                func = Function(name, args, body, line=self.line, col=tok[2])
+                func = Function(name, args, body, defaults=defaults, line=self.line, col=tok[2])
                 FUNCTIONS[name] = func
                 if self.package:
                     _function_origination[name] = self.package
@@ -975,7 +1007,7 @@ class Evaluator:
 
                 return InvokeNative(name, (keywordtok == 'calllocalnative'), line=self.line, col=tok[2])
             elif keywordtok == 'end':
-                raise SyntaxError(f"'end' without a matching block" f" Line {self.line}, Column {self.col}")
+                raise SyntaxError("'end' without a matching block")
             elif keywordtok == 'if':
                 return self.parseIf(tok)
             elif keywordtok == 'exit':
@@ -1028,11 +1060,11 @@ class Evaluator:
             elif keywordtok == 'continue':
                 return Continue(line=self.line, col=tok[2])
 
-            raise SyntaxError(f"Unknown keyword '{keywordtok}'" f" Line {self.line}, Column {tok[2]}")
+            raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
         else:
-            raise SyntaxError(f"Unexpected token: {tok}" f" Line {self.line}, Column {tok[2]}")
+            raise SyntaxError(f"Unexpected token: {tok}")
 
     def peek(self):
         if self.pos >= len(self.tokens):
@@ -1042,6 +1074,7 @@ class Evaluator:
         tok = self.peek()
         if tok is not None:
             self.pos += 1
+        self.col = tok[2] if tok is not None else self.col
         return tok
     def parse(self):
         self.pos = 0
@@ -1052,8 +1085,25 @@ class Evaluator:
                 self.line += 1
                 self.advance()
                 continue
+            
+            try:
+                nodes.append(self.parseStatement())
+            except Exception as e:
+                print(f"""
+Parsing Error
+Line: {self.line}, Column: {self.col}
+Last Registered Token: {self.peek()}
 
-            nodes.append(self.parseStatement())
+Error:
+[{type(e).__name__}] {e}
+                """)
+                print(self._plaintext.splitlines()[self.line-1])
+                print(' ' * (self.col - 1) + '^')
+
+                if Config.SHOW_PYTHON_TRACEBACK:
+                    traceback.print_exc()
+
+                raise SystemExit(1)
 
         return nodes
 
@@ -1264,7 +1314,6 @@ Error Preview:
             print('~' * adjusted + '^' + '~' * (len(_linetext_B) - adjusted - 1))
 
         if Config.SHOW_PYTHON_TRACEBACK:
-            import traceback
             traceback.print_exc()
     
     def evaluate(self, node, context: dict[str, object] = {}):
@@ -1411,6 +1460,9 @@ Error Preview:
             args_as_dict = dict(
                 zip(func.args, (self.evaluate(arg, context) for arg in node.args))
             )
+            for arg_name, default_value in func.defaults.items():
+                if arg_name not in args_as_dict:
+                    args_as_dict[arg_name] = self.evaluate(default_value, context)
 
             LOCAL_VAR_STACK.append({})
             LOCAL_STACK.append([])
@@ -1459,6 +1511,9 @@ Error Preview:
         elif isinstance(node, BooleanExpression):
             left = self.evaluate(node.left, context)
             right = self.evaluate(node.right, context)
+
+            if not isinstance(left, bool) or not isinstance(right, bool):
+                raise TypeError("Boolean operands must be booleans")
 
             if node.op == "&&":
                 return left and right
