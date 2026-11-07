@@ -623,6 +623,8 @@ class Evaluator:
         skip_until = 0
 
         for match in matches:
+            if Config.DEBUG_PARSER:
+                print('Lexer match:', match)
             if match.start() < skip_until:
                 continue
             value = match.group()
@@ -678,6 +680,9 @@ class Evaluator:
                     tokens.append(('PUNCTUATION', value))
                     continue
 
+                if Config.NO_ITERABLE:
+                    raise SyntaxError("Iterables are not allowed by bootflag")
+
                 tokens.append((_type, self.source[match.end():pos - 1]))
                 skip_until = pos
                 continue
@@ -724,7 +729,8 @@ class Evaluator:
                 pass
             else:
                 raise SyntaxError(f"Unexpected character: {value!r}")
-
+            if Config.DEBUG_PARSER:
+                print('Lexer value:', value)
         self.tokens = tokens
 
     def parseExpression(self, min_precedence=0):
@@ -874,6 +880,8 @@ class Evaluator:
         return If(branches, line=self.line)
     def parseStatement(self):
         tok = self.advance()
+        if Config.DEBUG_PARSER:
+            print('Parsed token:', tok)
         if tok[0] == 'KEYWORD':
             keywordtok = tok[1]
 
@@ -1055,13 +1063,16 @@ class Config:
     MAX_INTEGER: int = 2**64
 
     DEBUG: bool = False
+    DEBUG_PARSER: bool = False
+    DEBUG_SCOPE: bool = False
 
     NO_NATIVES: bool = False
     NO_FUNCTIONS: bool = False
     NO_IMPORTS: bool = False
     NO_RECURSION: bool = False
     NO_LOOP: bool = False
-    NO_VAR_REDEFINE: bool = False
+    NO_VAR_MODIFY: bool = False
+    NO_ITERABLE: bool = False
 
     PRINT_ON_LAUNCH: str = ''
     CLEAR_ON_LAUNCH: bool = False
@@ -1074,11 +1085,14 @@ class Config:
 
     AUTO_FILE: str = ''
     ALLOW_MANUAL_FLAG_ENTRY: bool = False
+    ALLOW_FLAGS: bool = True
 
 with open(BASE_DIR / 'bootflags.txt', 'r') as f:
     config_lines = f.readlines()
-
 def parseKey(line: str):
+    if not Config.ALLOW_FLAGS:
+        raise ValueError("Bootflags are not allowed.")
+
     line = line.replace('-', '_')
     key, value = line.split('=', 1)
     key = key.strip().upper()
@@ -1190,6 +1204,8 @@ class Interpreter:
     def _pushStackFrame(self, info: dict):
         if len(self.stack_frames) >= (Config.MAX_STACK_FRAMES or float('inf')):
             raise RuntimeError("Stackverflow: maximum stack frames exceeded")
+        if Config.DEBUG_SCOPE:
+            print(f"Pushing stack frame: {info['scope']}, {info['type']}, {info['context']}, {info.get('return_scope', None)}")
         self.stack_frames.append(info)
     
     def evaluate(self, node, context: dict[str, object] = {}):
@@ -1234,8 +1250,8 @@ class Interpreter:
                 raise RuntimeError("Maximum number of global variables exceeded")
             GLOBAL_VAR[node.name] = self.evaluate(node.value, context)
         elif isinstance(node, SetVar):
-            if Config.NO_VAR_REDEFINE:
-                raise RuntimeError("Variable redefinition is disabled by bootflag")
+            if Config.NO_VAR_MODIFY:
+                raise RuntimeError("Variable modification is disabled by bootflag")
 
             value = self.evaluate(node.newValue, context)
 
@@ -1246,8 +1262,8 @@ class Interpreter:
             else:
                 raise NameError(f"Variable '{node.name}' is not defined")
         elif isinstance(node, SetGlobalVar):
-            if Config.NO_VAR_REDEFINE:
-                raise RuntimeError("Variable redefinition is disabled by bootflag")
+            if Config.NO_VAR_MODIFY:
+                raise RuntimeError("Variable modification is disabled by bootflag")
             value = self.evaluate(node.newValue, context)
             if node.name not in GLOBAL_VAR:
                 raise NameError(f"Variable '{node.name}' is not defined")
