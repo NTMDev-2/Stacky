@@ -1,8 +1,12 @@
 Python libraries used:
 
-re (main)
-threading (main)
-dataclasses (main)
-pathlib (main)
-tkinter (gui)
+re
+subprocess
+time
+traceback
+typing
+dataclasses: dataclass, field
+pathlib: Path
+tkinter (ui)
+
 stackviewer (ui, included with main script)
