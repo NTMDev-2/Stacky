@@ -519,6 +519,11 @@ class Natives:
     def raiseerror(v):
         message = Natives._pop(v)
         raise RuntimeError(message)
+    @staticmethod
+    def asserterror(v):
+        condition = Natives._pop(v)
+        message = Natives._pop(v)
+        assert condition, message
 
 NATIVES = {
     name: getattr(Natives, name)
@@ -559,7 +564,7 @@ BASE_DIR = Path(__file__).parent
 FUNCTIONS: dict[str, Function] = {}
 IMPORTING_FILES: set[Path] = set()
 IMPORTED_FILES: set[Path] = set()
-
+            
 class Evaluator:
     def __init__(self, fileName: str = '', forcePath: Path | None = None):
         try:
