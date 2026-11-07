@@ -11,7 +11,7 @@ from stackview import LocalsViewer, StackViewer
 @dataclass
 class Node:
     line: int = field(default=0, kw_only=True)
-
+    col: int = field(default=0, kw_only=True)
 @dataclass
 class DefineVar(Node):
     name: str
@@ -107,8 +107,9 @@ class Return(Node):
     value: object | None
 
 class Program:
-    def __init__(self, nodes: list[type[Node]]):
-        self.nodes = nodes
+    def __init__(self, evaluator: 'Evaluator'):
+        self.evaluator = evaluator
+        self.nodes = self.evaluator.parse()
 class Ref(str):
     """A reference inside collections"""
 
@@ -564,9 +565,11 @@ BASE_DIR = Path(__file__).parent
 FUNCTIONS: dict[str, Function] = {}
 IMPORTING_FILES: set[Path] = set()
 IMPORTED_FILES: set[Path] = set()
-            
+
+_function_origination: dict[str, str] = {}
+
 class Evaluator:
-    def __init__(self, fileName: str = '', forcePath: Path | None = None):
+    def __init__(self, fileName: str = '', forcePath: Path | None = None, package: str = ''):
         try:
             if not forcePath:
                 with open(BASE_DIR / 'scripts' / f'{fileName}.txt', 'r') as f:
@@ -578,8 +581,13 @@ class Evaluator:
                     f.close()
         except (FileNotFoundError, OSError):
             self.source = fileName
+        self._plaintext = self.source
+        
         self.pos = 0
         self.line = 1
+        self.col = 1
+
+        self.package = package
         self.tokens: list[tuple[str, str]] = []
         self.lex()
     def lex(self):
@@ -628,6 +636,10 @@ class Evaluator:
             if match.start() < skip_until:
                 continue
             value = match.group()
+
+            line_start = self.source.rfind('\n', 0, match.start()) + 1
+            column = match.start() - line_start + 1
+            self.col = column
         
             if value in ['[', '(', '{']:
                 depth = 1
@@ -677,13 +689,13 @@ class Evaluator:
 
                 body = self.source[match.end():pos - 1]
                 if value == '(' and not has_top_level_comma and body.strip():
-                    tokens.append(('PUNCTUATION', value))
+                    tokens.append(('PUNCTUATION', value, self.col))
                     continue
 
                 if Config.NO_ITERABLE:
                     raise SyntaxError("Iterables are not allowed by bootflag")
 
-                tokens.append((_type, self.source[match.end():pos - 1]))
+                tokens.append((_type, self.source[match.end():pos - 1], self.col))
                 skip_until = pos
                 continue
             elif value in (" ", "\t"):
@@ -699,12 +711,12 @@ class Evaluator:
             elif value == "\n":
                 if context == 'valuedef':
                     context == ''
-                tokens.append(("NEWLINE", value))
+                tokens.append(("NEWLINE", value, self.col))
             elif value.startswith(('"', "'")):
-                tokens.append(("STRING", value[1:-1]))
+                tokens.append(("STRING", value[1:-1], self.col))
             elif (value.isdigit() or value.startswith('-')) or (value.count(".") == 1 and value.replace(".", "").isdigit()):
                 number = float(value) if "." in value else int(value)
-                tokens.append(("NUMBER", number))
+                tokens.append(("NUMBER", number, self.col))
             elif value in KEYWORDS:
                 if value == 'function':
                     context = 'funcdef'
@@ -714,21 +726,21 @@ class Evaluator:
                     context = 'valuedef'
                 elif value == 'end':
                     context = ''
-                tokens.append(("KEYWORD", value))
+                tokens.append(("KEYWORD", value, self.col))
             elif value[0].isalpha() or value[0] == "_":
-                tokens.append(("IDENTIFIER", value))
+                tokens.append(("IDENTIFIER", value, self.col))
             elif value in ['==', '>=', '<=', '!=', '>', '<']:
-                tokens.append(("OPERATOR", value))
+                tokens.append(("OPERATOR", value, self.col))
             elif value in ['&&', '||']:
-                tokens.append(("BOOLOP", value))
+                tokens.append(("BOOLOP", value, self.col))
             elif value in "~&^|":
-                tokens.append(("BINOP", value))
+                tokens.append(("BINOP", value, self.col))
             elif value in "()[],":
-                tokens.append(("PUNCTUATION", value))
+                tokens.append(("PUNCTUATION", value, self.col))
             elif value.isspace():
                 pass
             else:
-                raise SyntaxError(f"Unexpected character: {value!r}")
+                raise SyntaxError(f"Unexpected character: {value!r}" f"Line {self.line}, Column {self.col}")
             if Config.DEBUG_PARSER:
                 print('Lexer value:', value)
         self.tokens = tokens
@@ -764,17 +776,17 @@ class Evaluator:
 
         if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
             if tok[1] == 'pop':
-                return Pop(None, line=self.line)
-            return PopLocal(None, line=self.line)
+                return Pop(None, line=self.line, col=tok[2])
+            return PopLocal(None, line=self.line, col=tok[2])
         elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null'):
             value = tok[1].lower()
             if value == 'true':
-                return Literal(True, line=self.line)
+                return Literal(True, line=self.line, col=tok[2])
             elif value == 'false':
-                return Literal(False, line=self.line)
-            return Literal(None, line=self.line)
+                return Literal(False, line=self.line, col=tok[2])
+            return Literal(None, line=self.line, col=tok[2])
         elif tok[0] == 'IDENTIFIER':
-            return Variable(tok[1], line=self.line)
+            return Variable(tok[1], line=self.line, col=tok[2])
         elif tok[0] in ('NUMBER', 'STRING'):
             if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
                 raise RuntimeError("Illegal expression")
@@ -782,7 +794,7 @@ class Evaluator:
                 raise RuntimeError("Maximum string length exceeded")
             if tok[0] == 'NUMBER' and Config.MAX_INTEGER is not None and abs(int(tok[1])) > Config.MAX_INTEGER:
                     raise RuntimeError("Maximum integer value exceeded") 
-            return Literal(tok[1], line=self.line)
+            return Literal(tok[1], line=self.line, col=tok[2])
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             prefix = tok[0][0]
             found_pop = []
@@ -796,17 +808,17 @@ class Evaluator:
                     f"Invalid {tok[0].lower()} literal: {e}"
                 ) from e
             if found_pop:
-                return CollectionLiteral(prefix, tok[1], line=self.line)
+                return CollectionLiteral(prefix, tok[1], line=self.line, col=tok[2])
             try:
                 return Literal(
                     Natives._toIntIter(
                         Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')
                     ),
-                    line=self.line
+                    line=self.line, col=tok[2]
                 )
             except ValueError as e:
                 raise SyntaxError(
-                    f"Invalid {tok[0].lower()} literal: {e}"
+                    f"Invalid {tok[0].lower()} literal: {e}" f" Line {self.line}, Column {tok[2]}"
                 ) from e
         elif tok[1] == '(':
             expression = self.parseExpression()
@@ -831,6 +843,7 @@ class Evaluator:
 
         while self.peek() is not None:
             if self.peek()[0] == 'NEWLINE':
+                self.line += 1
                 self.advance()
                 continue
 
@@ -843,7 +856,7 @@ class Evaluator:
             body.append(self.parseStatement())
 
         return body
-    def parseIf(self):
+    def parseIf(self, tok):
         branches = []
 
         condition = self.parseCondition()
@@ -874,10 +887,10 @@ class Evaluator:
             branches.append((True, body)) # Just pass a primitive True, so it will run if everything else fails
 
         if not self.peek() or self.peek() != ('KEYWORD', 'end'):
-            raise SyntaxError("Expected 'end' to close if statement")
+            raise SyntaxError("Expected 'end' to close if statement" f" Line {self.line}, Column {tok[2]}")
 
         self.advance()
-        return If(branches, line=self.line)
+        return If(branches, line=self.line, col=tok[2])
     def parseStatement(self):
         tok = self.advance()
         if Config.DEBUG_PARSER:
@@ -889,26 +902,26 @@ class Evaluator:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'define':
-                    return DefineVar(name, value, line=self.line)
-                return DefineGlobalVar(name, value, line=self.line)
+                    return DefineVar(name, value, line=self.line, col=tok[2])
+                return DefineGlobalVar(name, value, line=self.line, col=tok[2])
             elif keywordtok in ['pop', 'poplocal']:
                 varOptional = None
                 if self.peek() and self.peek()[0] == 'IDENTIFIER':
                     varOptional = self.advance()[1]
                 if keywordtok == 'pop':
-                    return Pop(varOptional, line=self.line)
-                return PopLocal(varOptional, line=self.line)
+                    return Pop(varOptional, line=self.line, col=tok[2])
+                return PopLocal(varOptional, line=self.line, col=tok[2])
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseExpression()
                 if keywordtok == 'push':
-                    return Push(value, line=self.line)
-                return PushLocal(value, line=self.line)
+                    return Push(value, line=self.line, col=tok[2])
+                return PushLocal(value, line=self.line, col=tok[2])
             elif keywordtok in ['set', 'setglobal']:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'set':
-                    return SetVar(name, value, line=self.line)
-                return SetGlobalVar(name, value, line=self.line)
+                    return SetVar(name, value, line=self.line, col=tok[2])
+                return SetGlobalVar(name, value, line=self.line, col=tok[2])
             elif keywordtok == 'call':
                 func = self.advance()[1]
                 args = []
@@ -916,12 +929,12 @@ class Evaluator:
                 while self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     args.append(self.parseExpression())
 
-                return Call(func, args, line=self.line)
+                return Call(func, args, line=self.line, col=tok[2])
             elif keywordtok in ['apply', 'applylocal']:
                 func = self.advance()[1]
                 if keywordtok == 'apply':
-                    return Apply(func, line=self.line)
-                return ApplyLocal(func, line=self.line)
+                    return Apply(func, line=self.line, col=tok[2])
+                return ApplyLocal(func, line=self.line, col=tok[2])
             elif keywordtok == 'function':
                 if Config.NO_FUNCTIONS:
                     raise RuntimeError("Function definitions are disabled by bootflag")
@@ -951,29 +964,32 @@ class Evaluator:
                     raise SyntaxError(f"Function '{name}' is missing 'end'")
 
                 self.advance()
-                func = Function(name, args, body, line=self.line)
+                func = Function(name, args, body, line=self.line, col=tok[2])
                 FUNCTIONS[name] = func
+                if self.package:
+                    _function_origination[name] = self.package
+
                 return func
             elif keywordtok in ['callnative', 'calllocalnative']:
                 name = self.advance()[1]
 
-                return InvokeNative(name, (keywordtok == 'calllocalnative'), line=self.line)
+                return InvokeNative(name, (keywordtok == 'calllocalnative'), line=self.line, col=tok[2])
             elif keywordtok == 'end':
-                raise SyntaxError("'end' without a matching block")
+                raise SyntaxError(f"'end' without a matching block" f" Line {self.line}, Column {self.col}")
             elif keywordtok == 'if':
-                return self.parseIf()
+                return self.parseIf(tok)
             elif keywordtok == 'exit':
                 try:
                     depth = self.parseExpression()
                 except SyntaxError:
                     depth = 1
                 if isinstance(depth, Literal) and str(depth.val).isnumeric():
-                    return BlockExit(depth.val, line=self.line)
-                return BlockExit(line=self.line)
+                    return BlockExit(depth.val, line=self.line, col=tok[2])
+                return BlockExit(line=self.line, col=tok[2])
             elif keywordtok == 'loop':
                 body = self.parseBlock({'end'})
                 self.advance()
-                return Loop(body, line=self.line)
+                return Loop(body, line=self.line, col=tok[2])
             elif keywordtok == 'import':
                 module = self.advance()
                 if module is None or module[0] != 'IDENTIFIER':
@@ -989,7 +1005,7 @@ class Evaluator:
                     IMPORTING_FILES.add(path)
                     try:
                         start_time = time.time()
-                        imported_nodes = Evaluator(forcePath=path).parse()
+                        imported_nodes = Evaluator(forcePath=path, package=module[1]).parse()
 
                         for imported_node in imported_nodes:
                             if not isinstance(imported_node, (Function, Import)):
@@ -1003,20 +1019,20 @@ class Evaluator:
                     finally:
                         IMPORTING_FILES.remove(path)
 
-                return Import(module[1], line=self.line)
+                return Import(module[1], line=self.line, col=tok[2])
             elif keywordtok == 'return':
                 value = None
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     value = self.parseExpression()
-                return Return(value, line=self.line)
+                return Return(value, line=self.line, col=tok[2])
             elif keywordtok == 'continue':
-                return Continue(line=self.line)
+                return Continue(line=self.line, col=tok[2])
 
-            raise SyntaxError(f"Unknown keyword '{keywordtok}'")
+            raise SyntaxError(f"Unknown keyword '{keywordtok}'" f" Line {self.line}, Column {tok[2]}")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
         else:
-            raise SyntaxError(f"Unexpected token: {tok}")
+            raise SyntaxError(f"Unexpected token: {tok}" f" Line {self.line}, Column {tok[2]}")
 
     def peek(self):
         if self.pos >= len(self.tokens):
@@ -1065,6 +1081,7 @@ class Config:
     DEBUG: bool = False
     DEBUG_PARSER: bool = False
     DEBUG_SCOPE: bool = False
+    SHOW_PYTHON_TRACEBACK: bool = False
 
     NO_NATIVES: bool = False
     NO_FUNCTIONS: bool = False
@@ -1148,7 +1165,7 @@ class Interpreter:
 
         self.stack_frames: list[dict] = []
 
-        self.currentnode = None
+        self.currentnode: Node | None = None
 
     def getVar(self, name, context=None, precedence='global'):
         if context is None:
@@ -1208,6 +1225,47 @@ class Interpreter:
         if Config.DEBUG_SCOPE:
             print(f"Pushing stack frame: {info['scope']}, {info['type']}, {info['context']}, {info.get('return_scope', None)}")
         self.stack_frames.append(info)
+    def _requestTraceback(self, exc: Exception):
+        print('\nTraceback, most recent call last: ')
+        module_trace = []
+        for i in list(reversed(self.stack_frames)):
+            if i['type'] == 'function':
+                _origin = _function_origination.get(i['scope'], '<self>')
+                print(f"In function {i['scope']}, of module {_origin}")
+                module_trace.append(_origin)
+        _line = int(self.currentnode.line) if hasattr(self, 'currentnode') else -1
+        if not module_trace:
+            print('[The error was not detected in any function]')
+            module_trace.append('<self>')
+        print(f"""
+Exception in module [{module_trace[-1]}]: 
+[{type(exc).__name__}] {exc.__str__()}\n
+Line: {_line}
+Node: {self.currentnode}
+
+Error Preview:
+""")
+        if module_trace[-1] == '<self>':
+            _linetext_A = self.prog.evaluator._plaintext.splitlines()[_line-1]
+            _linetext_B = self.prog.evaluator._plaintext.splitlines()[_line-1].lstrip()
+            print(f"{_linetext_B if _line >= 0 else '[Could not retrieve preview of line]'}")
+        else:
+            with open(BASE_DIR / 'packages' / f"{module_trace[-1]}.txt", 'r') as f:
+                lines = f.readlines()
+                f.close()
+
+            _linetext_A = lines[_line-1]
+            _linetext_B = lines[_line-1].lstrip()
+            print(f"{_linetext_B if _line >= 0 else '[Could not retrieve preview of line]'}")
+
+        if self.currentnode:
+            shifted = len(_linetext_A) - len(_linetext_B)
+            adjusted = self.currentnode.col - shifted - 1
+            print('~' * adjusted + '^' + '~' * (len(_linetext_B) - adjusted - 1))
+
+        if Config.SHOW_PYTHON_TRACEBACK:
+            import traceback
+            traceback.print_exc()
     
     def evaluate(self, node, context: dict[str, object] = {}):
         if Config.DEBUG:
@@ -1215,6 +1273,7 @@ class Interpreter:
             step_counter += 1
             print(f"Step {step_counter}: {node} (Scope: {self.scope})")
 
+        self.currentnode = node
         if isinstance(node, Literal):
             return node.val
         elif isinstance(node, primitive):
@@ -1270,15 +1329,15 @@ class Interpreter:
                 raise NameError(f"Variable '{node.name}' is not defined")
             GLOBAL_VAR[node.name] = value
         elif isinstance(node, Push):
-            if len(STACK) >= (Config.MAX_STACK_DEPTH or float('inf')):
-                raise RuntimeError("Stackverflow: maximum stack depth exceeded")
+            if len(STACK) >= float(Config.MAX_STACK_DEPTH or 'inf'):
+                raise RuntimeError("StackOverflow: maximum stack depth exceeded")
             val = self.evaluate(node.value, context)
             if isinstance(val, Function):
                 val = f'<FunctionInstance {val.name}>'
             STACK.append(val)
         elif isinstance(node, PushLocal):
-            if len(LOCAL_STACK[-1]) >= (Config.MAX_LOCAL_STACK_DEPTH or float('inf')):
-                raise RuntimeError("Stackverflow: maximum local stack depth exceeded")
+            if len(LOCAL_STACK[-1]) >= float(Config.MAX_LOCAL_STACK_DEPTH or 'inf'):
+                raise RuntimeError("StackOverflow: maximum local stack depth exceeded")
 
             if self.scope == 'GLOBAL':
                 raise RuntimeError('PushLocal without a scope')
@@ -1537,6 +1596,7 @@ class Interpreter:
                 return True
 
             node = frame["body"][frame["index"]]
+            self.currentnode = node
             frame["index"] += 1
 
             self.scope = frame["scope"]
@@ -1582,7 +1642,7 @@ class Interpreter:
         if go:
             self.run()
     def reloadFile(self):
-        self.prog = Program(Evaluator(fileName).parse())
+        self.prog = Program(Evaluator(fileName))
         if self.nodes == self.prog.nodes:
             print('There was no change detected in the reload. Did you save?')
         self.nodes = self.prog.nodes
@@ -1591,7 +1651,7 @@ class Interpreter:
 fileName = (Config.AUTO_FILE[1:-1] if Config.AUTO_FILE else input('Enter file name: '))
 if Config.PRINT_ON_LAUNCH:
     print(Config.PRINT_ON_LAUNCH)
-interpreter = Interpreter(Program(Evaluator(fileName).parse()))
+interpreter = Interpreter(Program(Evaluator(fileName)))
 
 if Config.DUMP_AST:
     print('Dumping AST:')
