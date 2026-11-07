@@ -521,8 +521,8 @@ class Natives:
         raise RuntimeError(message)
     @staticmethod
     def asserterror(v):
-        condition = Natives._pop(v)
         message = Natives._pop(v)
+        condition = Natives._pop(v)
         assert condition, message
 
 NATIVES = {
@@ -540,7 +540,7 @@ KEYWORDS = [
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
-    r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
     r'|-?\d+(?:\.\d+)?'
     r'|[A-Za-z_]\w*'
     r'|==|!=|<=|>=|&&|\|\|'
@@ -1078,6 +1078,7 @@ class Config:
     CLEAR_ON_LAUNCH: bool = False
     DUMP_AST: bool = False
     DUMP_FUNCTIONS: bool = False
+    DUMP_NATIVES: bool = False
 
     STOP_AT_STEP: int | None = None
     EXECUTION_MS_LIMIT: int = 5
@@ -1600,6 +1601,10 @@ if Config.DUMP_FUNCTIONS:
     print('Dumping functions:')
     for func in FUNCTIONS:
         print(func)
+if Config.DUMP_NATIVES:
+    print('Dumping natives:')
+    for native in NATIVES:
+        print(native)
 
 viewer = StackViewer(STACK, interpreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, interpreter)
