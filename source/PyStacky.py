@@ -596,6 +596,7 @@ class Evaluator:
         except Exception as e:
             print(f"""
 Lexer Error
+Module: {self.package if self.package else '<self>'}
 Line: {self.line}, Column: {self.col}
 
 Error: 
@@ -764,6 +765,9 @@ Error:
             if Config.DEBUG_PARSER:
                 print('Lexer value:', value)
         self.tokens = tokens
+        if Config.DUMP_TOKENS:
+            for token in tokens:
+                print(token)
 
     def parseExpression(self, min_precedence=0):
         left = self.parseSingular()
@@ -906,7 +910,7 @@ Error:
             body = self.parseBlock({'end'})
             branches.append((True, body)) # Just pass a primitive True, so it will run if everything else fails
 
-        if not self.peek() or self.peek() != ('KEYWORD', 'end'):
+        if not self.peek() or self.peek()[1] != 'end':
             raise SyntaxError("Expected 'end' to close if statement")
 
         self.advance()
@@ -1075,6 +1079,7 @@ Error:
         if tok is not None:
             self.pos += 1
         self.col = tok[2] if tok is not None else self.col
+
         return tok
     def parse(self):
         self.pos = 0
@@ -1091,6 +1096,7 @@ Error:
             except Exception as e:
                 print(f"""
 Parsing Error
+Module: {self.package if self.package else '<self>'}
 Line: {self.line}, Column: {self.col}
 Last Registered Token: {self.peek()}
 
@@ -1143,13 +1149,17 @@ class Config:
 
     PRINT_ON_LAUNCH: str = ''
     CLEAR_ON_LAUNCH: bool = False
+
     DUMP_AST: bool = False
     DUMP_FUNCTIONS: bool = False
     DUMP_NATIVES: bool = False
+    DUMP_TOKENS: bool = False
 
     STOP_AT_STEP: int | None = None
     EXECUTION_MS_LIMIT: int = 5
+
     PROFILE_FUNCTIONS: bool = False
+    PROFILE_VARIABLES: bool = False
 
     AUTO_FILE: str = ''
     ALLOW_MANUAL_FLAG_ENTRY: bool = False
@@ -1221,23 +1231,35 @@ class Interpreter:
         if context is None:
             context = {}
 
-        
+        _start = time.time()
         if precedence == 'local' and self.scope != 'GLOBAL':
             if name in context:
-                return context[name]
+                _ret = context[name]
             if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
-                return LOCAL_VAR_STACK[-1][name]
+                _ret = LOCAL_VAR_STACK[-1][name]
+            if '_ret' in locals():
+                _end = time.time()
+                if Config.PROFILE_VARIABLES:
+                    print(f"Resolved variable '{name}' in {round(1000*(_end-_start),2)}ms")
+                    print(f"with value {_ret}")
+                return _ret
 
         if name in GLOBAL_VAR:
-            return GLOBAL_VAR[name]
+            _ret = GLOBAL_VAR[name]
         elif name in FUNCTIONS:
-            return FUNCTIONS[name]
+            _ret = FUNCTIONS[name]
         elif self.scope != 'GLOBAL':
             if name in context:
-                return context[name]
+                _ret = context[name]
             if LOCAL_VAR_STACK and name in LOCAL_VAR_STACK[-1]:
-                return LOCAL_VAR_STACK[-1][name]
+                _ret = LOCAL_VAR_STACK[-1][name]
 
+        if '_ret' in locals():
+            _end = time.time()
+            if Config.PROFILE_VARIABLES:
+                print(f"Resolved variable '{name}' in {round(1000*(_end-_start),2)}ms")
+                print(f"with value {_ret}")
+            return _ret
         raise NameError(f"Variable '{name}' is not defined")
 
     def _resolveList(self, internalList: list | tuple, scope: typing.Literal['local', 'global'], context):
