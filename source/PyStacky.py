@@ -110,7 +110,8 @@ class Return(Node):
 class Broadcast(Node):
     message: str
 class _Event:
-    def __init__(self, listening: str):
+    def __init__(self, listening: str, line: int = 0):
+        self.line = line
         self.listening = listening
         self._handler: Function | None = None
     @property
@@ -121,7 +122,7 @@ class _Event:
         self._handler = value
 
     def __call__(self):
-        return Call(func=self._handler.name, args=[], _usedAsEvent=True)
+        return Call(line=self.line, func=self._handler.name, args=[], _usedAsEvent=True)
 
 class Program:
     def __init__(self, evaluator: 'Evaluator'):
@@ -416,6 +417,21 @@ class Natives:
         start  = Natives._pop(v)
         s      = Natives._pop(v)
         Natives._push(s[start:start+length])
+    @staticmethod
+    def striterjoin(v):
+        sep = Natives._pop(v)
+        lst = Natives._toPyIter(Natives._pop(v))
+        Natives._push(sep.join(map(str, lst)))
+    @staticmethod
+    def strsplit(v):
+        sep = Natives._pop(v)
+        s = str(Natives._pop(v))
+        Natives._push(Natives._toIntIter(s.split(sep)))
+    @staticmethod
+    def strfind(v):
+        sub = Natives._pop(v)
+        s = str(Natives._pop(v))
+        Natives._push(s.find(sub))
 
     @staticmethod
     def iterlen(v):
@@ -1092,7 +1108,7 @@ Error:
                     if not self.peek():
                         raise SyntaxError(f"Event listener '{message.val}' is missing 'end'")
                     self.advance()
-                    EVENTS.setdefault(message.val, []).append(_Event(message.val))
+                    EVENTS.setdefault(message.val, []).append(_Event(message.val, self.line))
                     EVENTS[message.val][-1].handler = Function(body=body, name=message.val, args=[], line=self.line, col=tok[2])
                     return None
                 elif keywordtok == 'broadcast':
