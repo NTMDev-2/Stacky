@@ -410,16 +410,16 @@ class Natives:
             Natives._push(str(b) + str(a))
     @staticmethod
     def strlen(v):
-        Natives._push(len(Natives._pop(v)))
+        Natives._push(len(str(Natives._pop(v))))
     @staticmethod
     def substr(v):
         length = Natives._pop(v)
-        start  = Natives._pop(v)
-        s      = Natives._pop(v)
+        start = Natives._pop(v)
+        s = str(Natives._pop(v))
         Natives._push(s[start:start+length])
     @staticmethod
     def striterjoin(v):
-        sep = Natives._pop(v)
+        sep = str(Natives._pop(v))
         lst = Natives._toPyIter(Natives._pop(v))
         Natives._push(sep.join(map(str, lst)))
     @staticmethod
