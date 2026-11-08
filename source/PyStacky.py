@@ -1795,6 +1795,7 @@ Error Preview:
         if go:
             self.run()
     def reloadFile(self):
+        EVENTS.clear()
         self.prog = Program(Evaluator(fileName))
         if self.nodes == self.prog.nodes:
             print('There was no change detected in the reload. Did you save?')
