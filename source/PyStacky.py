@@ -56,6 +56,7 @@ class BlockEnd(Node):
 class Call(Node):
     func: str 
     args: list
+    _usedAsEvent: bool = False
 @dataclass
 class InvokeNative(Node):
     name: str
@@ -102,11 +103,25 @@ class Continue(Node):
     pass
 
 @dataclass
-class Import(Node):
-    package: str
-@dataclass
 class Return(Node):
     value: object | None
+
+@dataclass
+class Broadcast(Node):
+    message: str
+class _Event:
+    def __init__(self, listening: str):
+        self.listening = listening
+        self._handler: Function | None = None
+    @property
+    def handler(self) -> Function | None:
+        return self._handler
+    @handler.setter
+    def handler(self, value: Function | None):
+        self._handler = value
+
+    def __call__(self):
+        return Call(func=self._handler.name, args=[], _usedAsEvent=True)
 
 class Program:
     def __init__(self, evaluator: 'Evaluator'):
@@ -539,7 +554,8 @@ KEYWORDS = [
     'function', 'end', 'call', 'set', 'setglobal', 
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
     'calllocalnative', 'exit', 'loop', 'import', 
-    'apply', 'applylocal', 'return', 'continue'
+    'apply', 'applylocal', 'return', 'continue',
+    'onmessage', 'broadcast'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -564,6 +580,7 @@ PRECEDENCE = {
 }
 BASE_DIR = Path(__file__).parent
 
+EVENTS: dict[str, list[_Event]] = {}
 FUNCTIONS: dict[str, Function] = {}
 IMPORTING_FILES: set[Path] = set()
 IMPORTED_FILES: set[Path] = set()
@@ -1005,7 +1022,7 @@ Error:
                 if self.package:
                     _function_origination[name] = self.package
 
-                return func
+                return None
             elif keywordtok in ['callnative', 'calllocalnative']:
                 name = self.advance()[1]
 
@@ -1055,7 +1072,7 @@ Error:
                     finally:
                         IMPORTING_FILES.remove(path)
 
-                return Import(module[1], line=self.line, col=tok[2])
+                return None
             elif keywordtok == 'return':
                 value = None
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
@@ -1063,7 +1080,26 @@ Error:
                 return Return(value, line=self.line, col=tok[2])
             elif keywordtok == 'continue':
                 return Continue(line=self.line, col=tok[2])
+            elif keywordtok in ['onmessage', 'broadcast']:
+                if Config.NO_EVENTS:
+                    raise RuntimeError("Events are disabled via bootflag")
+                if keywordtok == 'onmessage':
+                    message = self.parseSingular()
+                    if not isinstance(message, Literal) and not isinstance(message.val, str):
+                        raise SyntaxError(f"Expected a string for the event handler name, got {message}")
+                    body = self.parseBlock({'end'})
 
+                    if not self.peek():
+                        raise SyntaxError(f"Event listener '{message.val}' is missing 'end'")
+                    self.advance()
+                    EVENTS.setdefault(message.val, []).append(_Event(message.val))
+                    EVENTS[message.val][-1].handler = Function(body=body, name=message.val, args=[], line=self.line, col=tok[2])
+                    return None
+                elif keywordtok == 'broadcast':
+                    message = self.parseSingular()
+                    if not isinstance(message, Literal) and not isinstance(message.val, str):
+                        raise SyntaxError(f"Expected a string for message, got {message}")
+                    return Broadcast(message.val, line=self.line, col=tok[2])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
@@ -1092,7 +1128,10 @@ Error:
                 continue
             
             try:
-                nodes.append(self.parseStatement())
+                parsed = self.parseStatement()
+                if not parsed:
+                    continue
+                nodes.append(parsed)
             except Exception as e:
                 print(f"""
 Parsing Error
@@ -1146,12 +1185,16 @@ class Config:
     NO_LOOP: bool = False
     NO_VAR_MODIFY: bool = False
     NO_ITERABLE: bool = False
+    NO_EVENTS: bool = False
+
+    LOG_EVENTS: bool = False
 
     PRINT_ON_LAUNCH: str = ''
     CLEAR_ON_LAUNCH: bool = False
 
     DUMP_AST: bool = False
     DUMP_FUNCTIONS: bool = False
+    DUMP_EVENTS: bool = False
     DUMP_NATIVES: bool = False
     DUMP_TOKENS: bool = False
 
@@ -1301,7 +1344,7 @@ class Interpreter:
         print('\nTraceback, most recent call last: ')
         module_trace = []
         for i in list(reversed(self.stack_frames)):
-            if i['type'] == 'function':
+            if i['type'] in ['function', 'broadcast']:
                 _origin = _function_origination.get(i['scope'], '<self>')
                 print(f"In function {i['scope']}, of module {_origin}")
                 module_trace.append(_origin)
@@ -1467,13 +1510,16 @@ Error Preview:
                     Natives.local = previous_local
             else:
                 raise NameError(f'Function {node.func} is not defined')
-        elif isinstance(node, (Function, Import)):
-            return None
         elif isinstance(node, Call):
             try:
                 func = FUNCTIONS[node.func]
             except KeyError:
-                if isinstance(self.getVar(node.func, context), Function):
+                if node._usedAsEvent:
+                    if node.func in EVENTS:
+                        func = EVENTS[node.func][self.stack_frames[-1]['index']].handler
+                    else:
+                        raise TypeError(f"Event listener '{node.func}' is not defined")
+                elif isinstance(self.getVar(node.func, context), Function):
                     func = self.getVar(node.func, context)
                 else:
                     raise TypeError(f"Function '{node.func}' is not defined")
@@ -1575,7 +1621,7 @@ Error Preview:
         elif isinstance(node, BlockExit):
             if not self.stack_frames:
                 raise RuntimeError('Exit without a stackframe')
-            self.finish_frame(node.depth)
+            self.finishFrame(node.depth)
         elif isinstance(node, Loop):
             if Config.NO_LOOP:
                 raise RuntimeError('Loop statements are disabled via bootflag')
@@ -1606,7 +1652,7 @@ Error Preview:
             )
             frame['has_return_value'] = node.value is not None
             frame['index'] = len(frame['body'])
-            self.finish_frame(returnDepth)
+            self.finishFrame(returnDepth)
         elif isinstance(node, Continue):
             isLoop = False
             for n, frame in enumerate(reversed(self.stack_frames)):
@@ -1618,6 +1664,16 @@ Error Preview:
                 raise RuntimeError('Continue outside a loop')
             frame = self.stack_frames[-continueDepth]
             frame['index'] = 0
+        elif isinstance(node, Broadcast):
+            self._pushStackFrame({
+                'type': 'broadcast',
+                'scope': f'<EventBroadcast {node.message}>',
+                'message': node.message,
+                'queue': [h for h in EVENTS.get(node.message, [])],
+                'context': context,
+                'index': 0,
+                'waiting': False
+            })             
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
@@ -1625,18 +1681,20 @@ Error Preview:
         self.pos += 1
         return self.nodes[self.pos]
 
-    def finish_frame(self, depth: int = 1):
+    def finishFrame(self, depth: int = 1):
         if depth < 1:
             raise ValueError("Exit depth must be at least 1")
 
         for _ in range(depth):
-            if not self.stack_frames:
-                return
-
             try:
                 frame = self.stack_frames.pop()
             except IndexError:
-                break
+                raise IndexError('No more execution frames left to finish')
+            if frame['type'] == 'broadcast':
+                if frame['index'] < len(frame['queue']):
+                    raise RuntimeError('Cannot finish a broadcast frame if not all handlers of it have been executed')
+                else:
+                    continue
 
             if frame['type'] == 'function':
                 return_value = frame.get('return_value')
@@ -1664,11 +1722,29 @@ Error Preview:
         if self.stack_frames:
             frame = self.stack_frames[-1]
 
+            if frame['type'] == 'broadcast':
+                if frame['waiting']:
+                    return True
+
+                if frame['index'] >= len(frame['queue']):
+                    self.finishFrame()
+                    return True
+
+                handler = frame['queue'][frame['index']]
+                if Config.LOG_EVENTS:
+                    print(f"Executing handler {frame['index'] + 1} of {len(frame['queue'])} of event {frame['message']}")
+                frame['waiting'] = True
+
+                self.evaluate(handler(), frame["context"])
+                frame['waiting'] = False
+                frame['index'] += 1
+                return True
+
             if frame["index"] >= len(frame["body"]):
                 if frame['type'] == 'loop':
                     frame['index'] = 0
                 else:
-                    self.finish_frame()
+                    self.finishFrame()
 
                 return True
 
