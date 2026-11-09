@@ -138,13 +138,45 @@ class _CollectionReader:
     KINDS = {'[': list, '(': tuple, '{': dict, 'L': list, 'T': tuple, 'M': dict}
     ESCAPES = {'n': '\n', 't': '\t', '\\': '\\', '"': '"'}
 
-    def __init__(self, text: str, popHook=None):
+    def __init__(self, text: str, popHook=None, line: int | None = None, col: int = 1):
         self.text = text
         self.pos = 0
         # Called with 'pop' or 'poplocal' when one appears as a bare item
         self.popHook = popHook
-    def error(self, msg):
-        return ValueError(f"{msg} at position {self.pos} in {self.text!r}")
+        # Where text[0] sits in the source file. When given, errors carry an
+        # absolute line/column (_psLine/_psCol) that already accounts for
+        # newlines inside the collection. Callers that wrap the body in a
+        # synthetic 'L{' prefix pass the column of the real opener minus one.
+        self.originLine = line
+        self.originCol = col
+    def location(self, pos: int | None = None):
+        """(line, column) in the source file of text[pos], both 1-based.
+
+        Every newline inside the text moves to the next line and resets the
+        column, so items on later lines of a multiline collection report their
+        real position.
+        """
+        pos = self.pos if pos is None else pos
+        pos = max(0, min(pos, len(self.text) - 1))
+        newlines = self.text.count('\n', 0, pos)
+        if newlines == 0:
+            return self.originLine, self.originCol + pos
+        return self.originLine + newlines, pos - self.text.rfind('\n', 0, pos)
+    @property
+    def line(self):
+        return self.location()[0] if self.originLine is not None else None
+    @property
+    def col(self):
+        return self.location()[1] if self.originLine is not None else None
+    def locate(self, exc: Exception, pos: int | None = None):
+        if self.originLine is not None and not hasattr(exc, '_psLine'):
+            exc._psLine, exc._psCol = self.location(pos)
+        return exc
+    def error(self, msg, pos: int | None = None):
+        if self.originLine is None:
+            at = self.pos if pos is None else pos
+            return ValueError(f"{msg} at position {at} in {self.text!r}")
+        return self.locate(ValueError(msg), pos)
     def peek(self):
         while self.pos < len(self.text) and self.text[self.pos].isspace():
             self.pos += 1
@@ -180,11 +212,15 @@ class _CollectionReader:
             if name.lower() in ('true', 'false'):
                 return name.lower() == 'true'
             if self.popHook is not None and name in ('pop', 'poplocal'):
-                return self.popHook(name)
+                try:
+                    return self.popHook(name)
+                except Exception as e:
+                    raise self.locate(e, match.start())
             return Ref(name)
 
         raise self.error(f'Unexpected character {ch!r}')
     def readString(self):
+        start = self.pos
         self.pos += 1  # opening quote
         out = []
         while self.pos < len(self.text):
@@ -198,7 +234,7 @@ class _CollectionReader:
                 out.append(self.ESCAPES.get(nxt, '\\' + nxt))
             else:
                 out.append(ch)
-        raise self.error('Unterminated string')
+        raise self.error('Unterminated string', start)
     def readItems(self, kind, closer):
         items = []
         while self.peek() != closer:
@@ -635,8 +671,10 @@ Line: {self.line}, Column: {self.col}
 Error: 
 [{type(e).__name__}] {e}
                         """)
-            print(self._plaintext.splitlines()[self.line - 1])
-            print(' ' * (self.col - 1) + '^')
+            _text_A = self._plaintext.splitlines()[self.line - 1]
+            _text_B = self._plaintext.splitlines()[self.line - 1].lstrip()
+            print(_text_B)
+            print(' ' * (self.col - 1 - (len(_text_A) - len(_text_B))) + '^')
             if Config.SHOW_PYTHON_TRACEBACK:
                 traceback.print_exc()
 
@@ -680,6 +718,8 @@ Error:
         context = ''
         matches = iter(TOKEN_PATTERN.finditer(self.source))
         skip_until = 0
+        lineNo = 1
+        lastPos = 0
 
         for match in matches:
             if Config.DEBUG_PARSER:
@@ -687,6 +727,12 @@ Error:
             if match.start() < skip_until:
                 continue
             value = match.group()
+
+            # Count every newline in the source up to this match, including the ones
+            # inside collections and strings that the lexer skips over in one token
+            lineNo += self.source.count('\n', lastPos, match.start())
+            lastPos = match.start()
+            self.line = lineNo
 
             line_start = self.source.rfind('\n', 0, match.start()) + 1
             column = match.start() - line_start + 1
@@ -697,7 +743,7 @@ Error:
                 pos = match.end()
 
                 if context in ('funcdef', 'ifdef'):
-                    tokens.append(('PUNCTUATION', value, self.col))
+                    tokens.append(('PUNCTUATION', value, self.col, self.line))
                     continue
 
                 if value == '[':
@@ -740,17 +786,15 @@ Error:
 
                 body = self.source[match.end():pos - 1]
                 if value == '(' and not has_top_level_comma and body.strip():
-                    tokens.append(('PUNCTUATION', value, self.col))
+                    tokens.append(('PUNCTUATION', value, self.col, self.line))
                     self.col = self.col
                     continue
 
                 if Config.NO_ITERABLE:
                     raise SyntaxError("Iterables are not allowed by bootflag")
 
-                tokens.append((_type, self.source[match.end():pos - 1], self.col))
+                tokens.append((_type, self.source[match.end():pos - 1], self.col, self.line))
                 skip_until = pos
-                continue
-            elif value in (" ", "\t"):
                 continue
             elif value.startswith('//'):
                 pos = self.source.find('\n', match.start())
@@ -763,14 +807,14 @@ Error:
             elif value == "\n":
                 if context == 'valuedef':
                     context == ''
-                tokens.append(("NEWLINE", value, self.col))
+                tokens.append(("NEWLINE", value, self.col, self.line))
             elif value.startswith(('"', "'")):
-                tokens.append(("STRING", value[1:-1], self.col))
+                tokens.append(("STRING", value[1:-1], self.col, self.line))
             elif value == '=' and context == 'funcdef':
-                tokens.append(("OPERATOR", value, self.col))
+                tokens.append(("OPERATOR", value, self.col, self.line))
             elif (value.isdigit() or value.startswith('-')) or (value.count(".") == 1 and value.replace(".", "").isdigit()):
                 number = float(value) if "." in value else int(value)
-                tokens.append(("NUMBER", number, self.col))
+                tokens.append(("NUMBER", number, self.col, self.line))
             elif value in KEYWORDS:
                 if value == 'function':
                     context = 'funcdef'
@@ -780,21 +824,21 @@ Error:
                     context = 'valuedef'
                 elif value == 'end':
                     context = ''
-                tokens.append(("KEYWORD", value, self.col))
+                tokens.append(("KEYWORD", value, self.col, self.line))
             elif value[0].isalpha() or value[0] == "_":
-                tokens.append(("IDENTIFIER", value, self.col))
+                tokens.append(("IDENTIFIER", value, self.col, self.line))
             elif value in ['==', '>=', '<=', '!=', '>', '<']:
-                tokens.append(("OPERATOR", value, self.col))
+                tokens.append(("OPERATOR", value, self.col, self.line))
             elif value in ['&&', '||']:
-                tokens.append(("BOOLOP", value, self.col))
+                tokens.append(("BOOLOP", value, self.col, self.line))
             elif value in "~&^|":
-                tokens.append(("BINOP", value, self.col))
+                tokens.append(("BINOP", value, self.col, self.line))
             elif value in "()[],":
-                tokens.append(("PUNCTUATION", value, self.col))
+                tokens.append(("PUNCTUATION", value, self.col, self.line))
             elif value.isspace():
                 pass
             else:
-                raise SyntaxError(f"Unexpected character: {value!r}" f"Line {self.line}, Column {self.col}")
+                raise SyntaxError(f"Unexpected character: {value!r}")
             if Config.DEBUG_PARSER:
                 print('Lexer value:', value)
         self.tokens = tokens
@@ -823,27 +867,33 @@ Error:
             right = self.parseExpression(precedence + 1)
 
             if operator.upper() in ('&&', '||'):
-                left = BooleanExpression(left, operator, right, line=self.line)
+                left = BooleanExpression(left, operator, right, line=next_tok[3])
             else:
-                left = Condition(left, operator, right, line=self.line)
+                left = Condition(left, operator, right, line=next_tok[3])
 
         return left
+    def _collectionError(self, tok, e: ValueError):
+        err = SyntaxError(f"Invalid {tok[0].lower()} literal: {e}")
+        for attr in ('_psLine', '_psCol'):
+            if hasattr(e, attr):
+                setattr(err, attr, getattr(e, attr))
+        return err
     def parseSingular(self):
         tok = self.advance()
 
         if tok[0] == 'KEYWORD' and tok[1] in ('pop', 'poplocal'):
             if tok[1] == 'pop':
-                return Pop(None, line=self.line, col=tok[2])
-            return PopLocal(None, line=self.line, col=tok[2])
+                return Pop(None, line=tok[3], col=tok[2])
+            return PopLocal(None, line=tok[3], col=tok[2])
         elif tok[0] == 'IDENTIFIER' and tok[1].lower() in ('true', 'false', 'null'):
             value = tok[1].lower()
             if value == 'true':
-                return Literal(True, line=self.line, col=tok[2])
+                return Literal(True, line=tok[3], col=tok[2])
             elif value == 'false':
-                return Literal(False, line=self.line, col=tok[2])
-            return Literal(None, line=self.line, col=tok[2])
+                return Literal(False, line=tok[3], col=tok[2])
+            return Literal(None, line=tok[3], col=tok[2])
         elif tok[0] == 'IDENTIFIER':
-            return Variable(tok[1], line=self.line, col=tok[2])
+            return Variable(tok[1], line=tok[3], col=tok[2])
         elif tok[0] in ('NUMBER', 'STRING'):
             if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
                 raise RuntimeError("Illegal expression")
@@ -851,7 +901,7 @@ Error:
                 raise RuntimeError("Maximum string length exceeded")
             if tok[0] == 'NUMBER' and Config.MAX_INTEGER is not None and abs(int(tok[1])) > Config.MAX_INTEGER:
                     raise RuntimeError("Maximum integer value exceeded") 
-            return Literal(tok[1], line=self.line, col=tok[2])
+            return Literal(tok[1], line=tok[3], col=tok[2])
         elif tok[0] in ('LIST', 'TUPLE', 'MAP'):
             prefix = tok[0][0]
             found_pop = []
@@ -859,24 +909,21 @@ Error:
                 found_pop.append(name)
                 return 0
             try:
-                _CollectionReader(f'{prefix}{{{tok[1]}}}', noteMarker).readDocument()
+                # Text index 0 is the synthetic prefix; the body starts one column after the opener
+                _CollectionReader(f'{prefix}{{{tok[1]}}}', noteMarker, tok[3], tok[2] - 1).readDocument()
             except ValueError as e:
-                raise SyntaxError(
-                    f"Invalid {tok[0].lower()} literal: {e}"
-                ) from e
+                raise self._collectionError(tok, e) from e
             if found_pop:
-                return CollectionLiteral(prefix, tok[1], line=self.line, col=tok[2])
+                return CollectionLiteral(prefix, tok[1], line=tok[3], col=tok[2])
             try:
                 return Literal(
                     Natives._toIntIter(
                         Natives._toPyIter(f'{tok[0][0]}{{{tok[1]}}}')
                     ),
-                    line=self.line, col=tok[2]
+                    line=tok[3], col=tok[2]
                 )
             except ValueError as e:
-                raise SyntaxError(
-                    f"Invalid {tok[0].lower()} literal: {e}" f" Line {self.line}, Column {tok[2]}"
-                ) from e
+                raise self._collectionError(tok, e) from e
         elif tok[1] == '(':
             expression = self.parseExpression()
             closing = self.advance()
@@ -900,7 +947,6 @@ Error:
 
         while self.peek() is not None:
             if self.peek()[0] == 'NEWLINE':
-                self.line += 1
                 self.advance()
                 continue
 
@@ -947,7 +993,7 @@ Error:
             raise SyntaxError("Expected 'end' to close if statement")
 
         self.advance()
-        return If(branches, line=self.line, col=tok[2])
+        return If(branches, line=tok[3], col=tok[2])
     def parseStatement(self):
         tok = self.advance()
         self.col = tok[2]
@@ -960,26 +1006,26 @@ Error:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'define':
-                    return DefineVar(name, value, line=self.line, col=tok[2])
-                return DefineGlobalVar(name, value, line=self.line, col=tok[2])
+                    return DefineVar(name, value, line=tok[3], col=tok[2])
+                return DefineGlobalVar(name, value, line=tok[3], col=tok[2])
             elif keywordtok in ['pop', 'poplocal']:
                 varOptional = None
                 if self.peek() and self.peek()[0] == 'IDENTIFIER':
                     varOptional = self.advance()[1]
                 if keywordtok == 'pop':
-                    return Pop(varOptional, line=self.line, col=tok[2])
-                return PopLocal(varOptional, line=self.line, col=tok[2])
+                    return Pop(varOptional, line=tok[3], col=tok[2])
+                return PopLocal(varOptional, line=tok[3], col=tok[2])
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseExpression()
                 if keywordtok == 'push':
-                    return Push(value, line=self.line, col=tok[2])
-                return PushLocal(value, line=self.line, col=tok[2])
+                    return Push(value, line=tok[3], col=tok[2])
+                return PushLocal(value, line=tok[3], col=tok[2])
             elif keywordtok in ['set', 'setglobal']:
                 name = self.advance()[1]
                 value = self.parseExpression()
                 if keywordtok == 'set':
-                    return SetVar(name, value, line=self.line, col=tok[2])
-                return SetGlobalVar(name, value, line=self.line, col=tok[2])
+                    return SetVar(name, value, line=tok[3], col=tok[2])
+                return SetGlobalVar(name, value, line=tok[3], col=tok[2])
             elif keywordtok == 'call':
                 func = self.advance()[1]
                 args = []
@@ -987,12 +1033,12 @@ Error:
                 while self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     args.append(self.parseExpression())
 
-                return Call(func, args, line=self.line, col=tok[2])
+                return Call(func, args, line=tok[3], col=tok[2])
             elif keywordtok in ['apply', 'applylocal']:
                 func = self.advance()[1]
                 if keywordtok == 'apply':
-                    return Apply(func, line=self.line, col=tok[2])
-                return ApplyLocal(func, line=self.line, col=tok[2])
+                    return Apply(func, line=tok[3], col=tok[2])
+                return ApplyLocal(func, line=tok[3], col=tok[2])
             elif keywordtok == 'function':
                 if Config.NO_FUNCTIONS:
                     raise RuntimeError("Function definitions are disabled by bootflag")
@@ -1033,7 +1079,7 @@ Error:
                     raise SyntaxError(f"Function '{name}' is missing 'end'")
 
                 self.advance()
-                func = Function(name, args, body, defaults=defaults, line=self.line, col=tok[2])
+                func = Function(name, args, body, defaults=defaults, line=tok[3], col=tok[2])
                 FUNCTIONS[name] = func
                 if self.package:
                     _function_origination[name] = self.package
@@ -1042,7 +1088,7 @@ Error:
             elif keywordtok in ['callnative', 'calllocalnative']:
                 name = self.advance()[1]
 
-                return InvokeNative(name, (keywordtok == 'calllocalnative'), line=self.line, col=tok[2])
+                return InvokeNative(name, (keywordtok == 'calllocalnative'), line=tok[3], col=tok[2])
             elif keywordtok == 'end':
                 raise SyntaxError("'end' without a matching block")
             elif keywordtok == 'if':
@@ -1053,12 +1099,12 @@ Error:
                 except SyntaxError:
                     depth = 1
                 if isinstance(depth, Literal) and str(depth.val).isnumeric():
-                    return BlockExit(depth.val, line=self.line, col=tok[2])
-                return BlockExit(line=self.line, col=tok[2])
+                    return BlockExit(depth.val, line=tok[3], col=tok[2])
+                return BlockExit(line=tok[3], col=tok[2])
             elif keywordtok == 'loop':
                 body = self.parseBlock({'end'})
                 self.advance()
-                return Loop(body, line=self.line, col=tok[2])
+                return Loop(body, line=tok[3], col=tok[2])
             elif keywordtok == 'import':
                 module = self.advance()
                 if module is None or module[0] != 'IDENTIFIER':
@@ -1093,9 +1139,9 @@ Error:
                 value = None
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     value = self.parseExpression()
-                return Return(value, line=self.line, col=tok[2])
+                return Return(value, line=tok[3], col=tok[2])
             elif keywordtok == 'continue':
-                return Continue(line=self.line, col=tok[2])
+                return Continue(line=tok[3], col=tok[2])
             elif keywordtok in ['onmessage', 'broadcast']:
                 if Config.NO_EVENTS:
                     raise RuntimeError("Events are disabled via bootflag")
@@ -1108,14 +1154,14 @@ Error:
                     if not self.peek():
                         raise SyntaxError(f"Event listener '{message.val}' is missing 'end'")
                     self.advance()
-                    EVENTS.setdefault(message.val, []).append(_Event(message.val, self.line))
-                    EVENTS[message.val][-1].handler = Function(body=body, name=message.val, args=[], line=self.line, col=tok[2])
+                    EVENTS.setdefault(message.val, []).append(_Event(message.val, tok[3]))
+                    EVENTS[message.val][-1].handler = Function(body=body, name=message.val, args=[], line=tok[3], col=tok[2])
                     return None
                 elif keywordtok == 'broadcast':
                     message = self.parseSingular()
                     if not isinstance(message, Literal) and not isinstance(message.val, str):
                         raise SyntaxError(f"Expected a string for message, got {message}")
-                    return Broadcast(message.val, line=self.line, col=tok[2])
+                    return Broadcast(message.val, line=tok[3], col=tok[2])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
@@ -1131,15 +1177,23 @@ Error:
         if tok is not None:
             self.pos += 1
         self.col = tok[2] if tok is not None else self.col
+        if tok is not None:
+            self.line = tok[3]
+
+        if tok[0] == 'NEWLINE':
+            self.line = tok[3] + 1
+            self.col = 0
 
         return tok
     def parse(self):
         self.pos = 0
         nodes = []
 
+        self.line = 1
+        self.col = 0
+
         while self.peek() is not None:
             if self.peek()[0] == 'NEWLINE':
-                self.line += 1
                 self.advance()
                 continue
             
@@ -1149,17 +1203,19 @@ Error:
                     continue
                 nodes.append(parsed)
             except Exception as e:
+                _line = getattr(e, '_psLine', self.line)
+                _col = getattr(e, '_psCol', self.col)
                 print(f"""
 Parsing Error
 Module: {self.package if self.package else '<self>'}
-Line: {self.line}, Column: {self.col}
+Line: {_line}, Column: {_col}
 Last Registered Token: {self.peek()}
 
 Error:
 [{type(e).__name__}] {e}
                 """)
-                print(self._plaintext.splitlines()[self.line-1])
-                print(' ' * (self.col - 1) + '^')
+                print(self._plaintext.splitlines()[_line-1])
+                print(' ' * (_col - 1) + '^')
 
                 if Config.SHOW_PYTHON_TRACEBACK:
                     traceback.print_exc()
@@ -1369,7 +1425,8 @@ class Interpreter:
                 _origin = _function_origination.get(i['scope'], '<self>')
                 print(f"In function {i['scope']}, of module {_origin}")
                 module_trace.append(_origin)
-        _line = int(self.currentnode.line) if hasattr(self, 'currentnode') else -1
+        _line = getattr(exc, '_psLine', None) or (int(self.currentnode.line) if hasattr(self, 'currentnode') else -1)
+        _col = getattr(exc, '_psCol', None) or (self.currentnode.col if self.currentnode else 0)
         if not module_trace:
             print('[The error was not detected in any function]')
             module_trace.append('<self>')
@@ -1396,7 +1453,7 @@ Error Preview:
 
         if self.currentnode:
             shifted = len(_linetext_A) - len(_linetext_B)
-            adjusted = self.currentnode.col - shifted - 1
+            adjusted = max(0, min(_col - shifted - 1, len(_linetext_B) - 1))
             print('~' * adjusted + '^' + '~' * (len(_linetext_B) - adjusted - 1))
 
         if Config.SHOW_PYTHON_TRACEBACK:
@@ -1424,7 +1481,7 @@ Error Preview:
                 else:
                     stack = STACK
                 return Natives._coerce(stack.pop())
-            items = _CollectionReader(f'{node.prefix}{{{node.text}}}', popItem).readDocument()
+            items = _CollectionReader(f'{node.prefix}{{{node.text}}}', popItem, node.line, node.col - 1).readDocument()
             return Natives._toIntIter(items)
         elif isinstance(node, DefineVar):
             if self.scope == 'GLOBAL':
