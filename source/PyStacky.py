@@ -141,21 +141,10 @@ class _CollectionReader:
     def __init__(self, text: str, popHook=None, line: int | None = None, col: int = 1):
         self.text = text
         self.pos = 0
-        # Called with 'pop' or 'poplocal' when one appears as a bare item
         self.popHook = popHook
-        # Where text[0] sits in the source file. When given, errors carry an
-        # absolute line/column (_psLine/_psCol) that already accounts for
-        # newlines inside the collection. Callers that wrap the body in a
-        # synthetic 'L{' prefix pass the column of the real opener minus one.
         self.originLine = line
         self.originCol = col
     def location(self, pos: int | None = None):
-        """(line, column) in the source file of text[pos], both 1-based.
-
-        Every newline inside the text moves to the next line and resets the
-        column, so items on later lines of a multiline collection report their
-        real position.
-        """
         pos = self.pos if pos is None else pos
         pos = max(0, min(pos, len(self.text) - 1))
         newlines = self.text.count('\n', 0, pos)
@@ -607,7 +596,7 @@ KEYWORDS = [
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
     'calllocalnative', 'exit', 'loop', 'import', 
     'apply', 'applylocal', 'return', 'continue',
-    'onmessage', 'broadcast'
+    'event', 'broadcast'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -1142,10 +1131,10 @@ Error:
                 return Return(value, line=tok[3], col=tok[2])
             elif keywordtok == 'continue':
                 return Continue(line=tok[3], col=tok[2])
-            elif keywordtok in ['onmessage', 'broadcast']:
+            elif keywordtok in ['event', 'broadcast']:
                 if Config.NO_EVENTS:
                     raise RuntimeError("Events are disabled via bootflag")
-                if keywordtok == 'onmessage':
+                if keywordtok == 'event':
                     message = self.parseSingular()
                     if not isinstance(message, Literal) and not isinstance(message.val, str):
                         raise SyntaxError(f"Expected a string for the event handler name, got {message}")
