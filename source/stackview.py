@@ -257,6 +257,8 @@ class LocalsViewer(_Polled, tk.Toplevel):
 
             stack = self._at(self.local_stack, i, [])
             for i, v in enumerate(stack):
+                if isinstance(v, self.interpreter._internal_CONVERT_FUNCTION):
+                    v = f"<FunctionInstance {v.name}>"
                 stack_lines.append(f"[{name}]: [{i}]: {v!r}")
 
             variables = {}
@@ -265,6 +267,8 @@ class LocalsViewer(_Polled, tk.Toplevel):
                 variables.update(frame.get("context", {}))
             variables.update(self._at(self.local_var_stack, i, {}))
             for var, value in variables.items():
+                if isinstance(value, self.interpreter._internal_CONVERT_FUNCTION):
+                    value = f"<FunctionInstance {value.name}>"
                 var_lines.append(f"[{name}] {var}: {value!r}")
 
         self.stack_panel.set_title(f"Local Stack ({len(stack_lines)})")
