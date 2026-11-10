@@ -1617,10 +1617,13 @@ Error Preview:
             LOCAL_STACK.append([])
             self.scopes_stack.append(node.func)
 
+            if len(args_as_dict) != len(func.args):
+                raise TypeError(f"Function '{node.func}' takes {len(func.args)} argument{'' if len(func.args) == 1 else 's'} but {len(args_as_dict)} were given")
+
             active_functions = [
                 frame['scope']
                 for frame in self.stack_frames
-                if frame['type'] == 'function'
+                if frame['type'] in ('function', 'broadcast')
             ]
 
             if Config.NO_RECURSION and node.func in active_functions:
