@@ -717,8 +717,6 @@ Error:
                 continue
             value = match.group()
 
-            # Count every newline in the source up to this match, including the ones
-            # inside collections and strings that the lexer skips over in one token
             lineNo += self.source.count('\n', lastPos, match.start())
             lastPos = match.start()
             self.line = lineNo
@@ -884,8 +882,8 @@ Error:
         elif tok[0] == 'IDENTIFIER':
             return Variable(tok[1], line=tok[3], col=tok[2])
         elif tok[0] in ('NUMBER', 'STRING'):
-            if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance '):
-                raise RuntimeError("Illegal expression")
+            if tok[0] == 'STRING' and tok[1].startswith('<FunctionInstance ') and tok[1].endswith('>'):
+                raise RuntimeError("Illegal string expression")
             if tok[0] == 'STRING' and len(str(tok[1])) > (Config.MAX_STRING_SIZE or float('inf')):
                 raise RuntimeError("Maximum string length exceeded")
             if tok[0] == 'NUMBER' and Config.MAX_INTEGER is not None and abs(int(tok[1])) > Config.MAX_INTEGER:
@@ -992,7 +990,10 @@ Error:
             keywordtok = tok[1]
 
             if keywordtok in ['define', 'defineglobal']:
-                name = self.advance()[1]
+                name = self.advance()
+                if not isinstance(name, tuple) or name[0] != 'IDENTIFIER':
+                    raise SyntaxError("Expected a name after 'define' or 'defineglobal'")
+                name = name[1]
                 value = self.parseExpression()
                 if keywordtok == 'define':
                     return DefineVar(name, value, line=tok[3], col=tok[2])
@@ -1001,17 +1002,25 @@ Error:
                 varOptional = None
                 if self.peek() and self.peek()[0] == 'IDENTIFIER':
                     varOptional = self.advance()[1]
+                
                 if keywordtok == 'pop':
                     return Pop(varOptional, line=tok[3], col=tok[2])
                 return PopLocal(varOptional, line=tok[3], col=tok[2])
             elif keywordtok in ['push', 'pushlocal']:
                 value = self.parseExpression()
+                if not value:
+                    raise SyntaxError("Expected a value after 'push' or 'pushlocal'")
+
                 if keywordtok == 'push':
                     return Push(value, line=tok[3], col=tok[2])
                 return PushLocal(value, line=tok[3], col=tok[2])
             elif keywordtok in ['set', 'setglobal']:
-                name = self.advance()[1]
+                name = self.advance()
+                if not isinstance(name, tuple) or name[0] != 'IDENTIFIER':
+                    raise SyntaxError("Expected a name after 'set' or 'setglobal'")
+                name = name[1]
                 value = self.parseExpression()
+
                 if keywordtok == 'set':
                     return SetVar(name, value, line=tok[3], col=tok[2])
                 return SetGlobalVar(name, value, line=tok[3], col=tok[2])
@@ -1168,6 +1177,9 @@ Error:
         self.col = tok[2] if tok is not None else self.col
         if tok is not None:
             self.line = tok[3]
+
+        if tok is None:
+            raise EOFError('Reached unexpected EOF')
 
         if tok[0] == 'NEWLINE':
             self.line = tok[3] + 1
@@ -1335,6 +1347,8 @@ class Interpreter:
         self.stack_frames: list[dict] = []
 
         self.currentnode: Node | None = None
+
+        self._internal_CONVERT_FUNCTION = Function
 
     def getVar(self, name, context=None, precedence='global'):
         if context is None:
@@ -1734,7 +1748,7 @@ Error Preview:
         elif isinstance(node, Broadcast):
             self._pushStackFrame({
                 'type': 'broadcast',
-                'scope': f'<EventBroadcast {node.message}>',
+                'scope': f'<BroadcastInstance {node.message}>',
                 'message': node.message,
                 'queue': [h for h in EVENTS.get(node.message, [])],
                 'context': context,
