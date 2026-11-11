@@ -105,6 +105,7 @@ class Continue(Node):
 @dataclass
 class Return(Node):
     value: object | None
+    noExit: bool = False
 
 @dataclass
 class Broadcast(Node):
@@ -1136,8 +1137,15 @@ Error:
             elif keywordtok == 'return':
                 value = None
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
-                    value = self.parseExpression()
-                return Return(value, line=tok[3], col=tok[2])
+                    value = self.parseSingular()
+                    noExit = self.parseExpression()
+                else:
+                    noExit = Literal(False)
+
+                if not isinstance(noExit, (Literal, Condition, BooleanExpression)):
+                    raise TypeError(f"Expected a simple boolean expression for noExit flag, got {noExit}")
+
+                return Return(value, noExit, line=tok[3], col=tok[2])
             elif keywordtok == 'continue':
                 return Continue(line=tok[3], col=tok[2])
             elif keywordtok in ['event', 'broadcast']:
@@ -1215,8 +1223,11 @@ Last Registered Token: {self.peek()}
 Error:
 [{type(e).__name__}] {e}
                 """)
-                print(self._plaintext.splitlines()[_line-1])
-                print(' ' * (_col - 1) + '^')
+                _text_A = self._plaintext.splitlines()[_line-1]
+                _text_B = self._plaintext.splitlines()[_line-1].lstrip()
+
+                print(_text_B)
+                print(' ' * (_col - 1 - len(_text_A) + len(_text_B)) + '^')
 
                 if Config.SHOW_PYTHON_TRACEBACK:
                     traceback.print_exc()
@@ -1268,6 +1279,7 @@ class Config:
     DUMP_CONFIG: bool = False
     DUMP_AST: bool = False
     DUMP_FUNCTIONS: bool = False
+    DUMP_FULL_FUNCTIONS: bool = False
     DUMP_EVENTS: bool = False
     DUMP_NATIVES: bool = False
     DUMP_TOKENS: bool = False
@@ -1423,18 +1435,22 @@ class Interpreter:
     def _requestTraceback(self, exc: Exception):
         print('\nTraceback, most recent call last: ')
         module_trace = []
+        function_trace = []
         for i in list(reversed(self.stack_frames)):
             if i['type'] in ['function', 'broadcast']:
                 _origin = _function_origination.get(i['scope'], '<self>')
-                print(f"In function {i['scope']}, of module {_origin}")
+                print(f"In {i['type']} \'{i['scope']}\'{f' (originating from {i['origination'].name})' if 'origination' in i else ''}, of module {_origin}")
+                function_trace.append(i['scope'])
                 module_trace.append(_origin)
         _line = getattr(exc, '_psLine', None) or (int(self.currentnode.line) if hasattr(self, 'currentnode') else -1)
         _col = getattr(exc, '_psCol', None) or (self.currentnode.col if self.currentnode else 0)
         if not module_trace:
             print('[The error was not detected in any function]')
             module_trace.append('<self>')
+        if not function_trace:
+            function_trace.append('<self>')
         print(f"""
-Exception in module [{module_trace[-1]}]: 
+Exception in [module {module_trace[-1]} at {function_trace[-1]}]:
 [{type(exc).__name__}] {exc.__str__()}\n
 Line: {_line}
 Node: {self.currentnode}
@@ -1595,6 +1611,7 @@ Error Preview:
             try:
                 func = FUNCTIONS[node.func]
             except KeyError:
+
                 if node._usedAsEvent:
                     if node.func in EVENTS:
                         func = EVENTS[node.func][self.stack_frames[-1]['index']].handler
@@ -1636,14 +1653,17 @@ Error Preview:
                 global FUNCTION_PROF_START
                 FUNCTION_PROF_START = time.time()
 
-            self._pushStackFrame({
+            _info = {
                 'type': 'function',
                 "body": func.body,
                 "index": 0,
                 "context": args_as_dict,
                 "scope": node.func,
                 "return_scope": previous_scope,
-            })
+            }
+            if node.func != func.name:
+                _info['origination'] = func
+            self._pushStackFrame(_info)
 
             self.scope = node.func
         elif isinstance(node, InvokeNative):
@@ -1736,7 +1756,9 @@ Error Preview:
             )
             frame['has_return_value'] = node.value is not None
             frame['index'] = len(frame['body'])
-            self.finishFrame(returnDepth)
+
+            if not self.evaluate(node.noExit, context):
+                self.finishFrame(returnDepth)
         elif isinstance(node, Continue):
             isLoop = False
             for n, frame in enumerate(reversed(self.stack_frames)):
@@ -1899,6 +1921,8 @@ if Config.DUMP_FUNCTIONS:
     print('Dumping functions:')
     for func in FUNCTIONS:
         print(func)
+    if Config.DUMP_FULL_FUNCTIONS:
+        print(FUNCTIONS[func].body, FUNCTIONS[func].args, FUNCTIONS[func].defaults)
 if Config.DUMP_NATIVES:
     print('Dumping natives:')
     for native in NATIVES:
