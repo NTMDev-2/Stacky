@@ -1138,12 +1138,13 @@ Error:
                 value = None
                 if self.peek() is not None and self.peek()[0] != 'NEWLINE':
                     value = self.parseSingular()
-                    noExit = self.parseExpression()
-                else:
+                try:
+                    noExit = self.parseSingular()
+                except SyntaxError:
                     noExit = Literal(False)
 
-                if not isinstance(noExit, (Literal, Condition, BooleanExpression)):
-                    raise TypeError(f"Expected a simple boolean expression for noExit flag, got {noExit}")
+                if not isinstance(noExit, Literal):
+                    raise TypeError(f"Expected a simple boolean value for noExit flag, got {noExit}")
 
                 return Return(value, noExit, line=tok[3], col=tok[2])
             elif keywordtok == 'continue':
@@ -1578,7 +1579,6 @@ Error Preview:
                     LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
                 elif node.varOptional in GLOBAL_VAR:
                     GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
-
             else:
                 return self._toInternalRepr(LOCAL_STACK[-1].pop())
         elif isinstance(node, (Apply, ApplyLocal)):
@@ -1739,26 +1739,25 @@ Error Preview:
             })
         elif isinstance(node, Return):
             isFunction = False
-            for n, frame in enumerate(reversed(self.stack_frames)):
-                if frame['type'] == 'function':
+            for n, frame in enumerate(reversed(self.stack_frames[:-1])):
+                if frame['type'] in ('function', 'broadcast'):
                     isFunction = True
-                    returnDepth = n + 1
+                    returnDepth = n
                     break
             if not isFunction:
                 raise RuntimeError('Return outside a function')
 
-            frame = self.stack_frames[-returnDepth]
-
-            frame['return_value'] = (
-                self.evaluate(node.value, context)
-                if node.value is not None
-                else None
-            )
-            frame['has_return_value'] = node.value is not None
-            frame['index'] = len(frame['body'])
+            
+            try:
+                local_stack = LOCAL_STACK[-returnDepth]
+            except IndexError:
+                raise RuntimeError('No function found to return to')
+            print('Return', returnDepth, local_stack)
+            local_stack.append(self.evaluate(node.value, context))
+            LOCAL_STACK[-returnDepth] = local_stack
 
             if not self.evaluate(node.noExit, context):
-                self.finishFrame(returnDepth)
+                self.finishFrame(returnDepth+1)
         elif isinstance(node, Continue):
             isLoop = False
             for n, frame in enumerate(reversed(self.stack_frames)):
