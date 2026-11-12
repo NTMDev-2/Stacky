@@ -1632,7 +1632,11 @@ Error Preview:
 
             LOCAL_VAR_STACK.append({})
             LOCAL_STACK.append([])
-            self.scopes_stack.append(node.func)
+
+            if node._usedAsEvent:
+                self.scopes_stack.append(f'<EventInstance {node.func}>')
+            else:
+                self.scopes_stack.append(node.func)
 
             if len(args_as_dict) != len(func.args):
                 raise TypeError(f"Function '{node.func}' takes {len(func.args)} argument{'' if len(func.args) == 1 else 's'} but {len(args_as_dict)} were given")
@@ -1747,12 +1751,10 @@ Error Preview:
             if not isFunction:
                 raise RuntimeError('Return outside a function')
 
-            
             try:
                 local_stack = LOCAL_STACK[-returnDepth]
             except IndexError:
                 raise RuntimeError('No function found to return to')
-            print('Return', returnDepth, local_stack)
             local_stack.append(self.evaluate(node.value, context))
             LOCAL_STACK[-returnDepth] = local_stack
 
