@@ -1,0 +1,27 @@
+function itercount(itx, e)
+    define x 0
+
+    define i 0
+    loop
+        pushlocal itx
+        calllocalnative iterlen
+        if i >= poplocal
+            push x
+            exit 3
+        end
+
+        pushlocal itx
+        pushlocal i
+        calllocalnative getelement
+
+        if poplocal == e
+            pushlocal x
+            calllocalnative inc
+            poplocal x
+        end
+
+        pushlocal i
+        calllocalnative inc
+        poplocal i
+    end
+end
