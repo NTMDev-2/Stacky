@@ -628,6 +628,7 @@ IMPORTING_FILES: set[Path] = set()
 IMPORTED_FILES: set[Path] = set()
 
 _function_origination: dict[str, str] = {}
+_function_profiles: dict[str, tuple[int | float, int | float]] = {}
 
 class Evaluator:
     def __init__(self, fileName: str = '', forcePath: Path | None = None, package: str = ''):
@@ -1290,6 +1291,7 @@ class Config:
 
     PROFILE_FUNCTIONS: bool = False
     PROFILE_VARIABLES: bool = False
+    SUMMARIZE_FUNC_PROFILES: bool = False
 
     AUTO_FILE: str = ''
     ALLOW_MANUAL_FLAG_ENTRY: bool = False
@@ -1611,7 +1613,6 @@ Error Preview:
             try:
                 func = FUNCTIONS[node.func]
             except KeyError:
-
                 if node._usedAsEvent:
                     if node.func in EVENTS:
                         func = EVENTS[node.func][self.stack_frames[-1]['index']].handler
@@ -1802,29 +1803,27 @@ Error Preview:
                     raise RuntimeError('Cannot finish a broadcast frame if not all handlers of it have been executed')
                 else:
                     continue
-
             if frame['type'] == 'function':
-                return_value = frame.get('return_value')
-                has_return_value = frame.get('has_return_value', False)
                 return_scope = frame['return_scope']
 
                 LOCAL_VAR_STACK.pop()
                 LOCAL_STACK.pop()
                 self.scopes_stack.pop()
                 self.scope = return_scope
-
-                if has_return_value:
-                    if return_scope == 'GLOBAL':
-                        STACK.append(return_value)
-                    else:
-                        LOCAL_STACK[-1].append(return_value)
-
             if self.scope == 'GLOBAL':
                 FUNCTION_PROF_END = time.time()
                 if Config.PROFILE_FUNCTIONS and frame['type'] == 'function':
                     func_name = frame['scope']
                     elapsed_time = FUNCTION_PROF_END - FUNCTION_PROF_START
                     print(f"Function '{func_name}' and its related calls finished in {round(1000*elapsed_time, 2)}ms")
+
+                    if Config.SUMMARIZE_FUNC_PROFILES:
+                        _function_profiles.setdefault(func_name, (9999999, 0))
+                        _function_profiles[func_name] = (min(_function_profiles[func_name][0], elapsed_time), max(_function_profiles[func_name][1], elapsed_time))
+
+                if Config.SUMMARIZE_FUNC_PROFILES and not Config.PROFILE_FUNCTIONS:
+                    print('Warning: the SUMMARIZE_FUNC_PROFILE flag depends on the PROFILE_FUNCTIONS flag')
+            
     def step(self):
         if self.stack_frames:
             frame = self.stack_frames[-1]
@@ -1891,6 +1890,7 @@ Error Preview:
         LOCAL_STACK.clear()
         LOCAL_VAR_STACK.clear()
         GLOBAL_VAR.clear()
+        _function_profiles.clear()
         self.stack_frames.clear()
         self.scopes_stack.clear()
         self.scope = 'GLOBAL'
@@ -1932,3 +1932,19 @@ if Config.DUMP_NATIVES:
 viewer = StackViewer(STACK, interpreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
 localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, interpreter)
 viewer._mainloop()
+if Config.SUMMARIZE_FUNC_PROFILES:
+    print('\nSummarizing all tracked functions...')
+    headers = ["Function", "Min (ms)", "Max (ms)"]
+    widths = [24, 13, 13]
+
+    def row(values):
+        return "  ".join(
+            str(value).ljust(width)
+            for value, width in zip(values, widths)
+        )
+
+    print(row(headers))
+    print("-" * (sum(widths) + 6))
+
+    for name, (minimum, maximum) in list(_function_profiles.items()):
+        print(row([name,f"{1000*minimum:.2f}",f"{1000*maximum:.2f}"]))
