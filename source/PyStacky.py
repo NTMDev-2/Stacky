@@ -13,65 +13,83 @@ from stackview import LocalsViewer, StackViewer
 class Node:
     line: int = field(default=0, kw_only=True)
     col: int = field(default=0, kw_only=True)
+    _len: typing.ClassVar[int] = 0
 @dataclass
 class DefineVar(Node):
     name: str
     value: object
+    _len: typing.ClassVar[int] = 6
 @dataclass
 class DefineGlobalVar(Node):
     name: str
     value: object
+    _len: typing.ClassVar[int] = 12
 @dataclass
 class SetVar(Node):
     name: str
     newValue: object
+    _len: typing.ClassVar[int] = 3
 @dataclass
 class SetGlobalVar(Node):
     name: str
     newValue: object
+    _len: typing.ClassVar[int] = 9
 @dataclass
 class DeleteVar(Node):
     name: str
+    _len: typing.ClassVar[int] = 6
 @dataclass
 class DeleteGlobalVar(Node):
     name: str
+    _len: typing.ClassVar[int] = 12
 
 @dataclass
 class Pop(Node):
     varOptional: str | None
+    _len: typing.ClassVar[int] = 3
 @dataclass
 class Push(Node):
     value: str | object
+    _len: typing.ClassVar[int] = 4
 @dataclass
 class PopLocal(Node):
     varOptional: str | None
+    _len: typing.ClassVar[int] = 8
 @dataclass
 class PushLocal(Node):
     value: str | object
+    _len: typing.ClassVar[int] = 9
 @dataclass
 class Function(Node):
     name: str
     args: list[str]
     body: list
+    _len: typing.ClassVar[int] = 8
     defaults: dict[str, object] = field(default_factory=dict)
 @dataclass
 class BlockEnd(Node):
-    pass
+    _len: typing.ClassVar[int] = 8
 @dataclass
 class Call(Node):
     func: str 
     args: list
     _usedAsEvent: bool = False
+    _len: typing.ClassVar[int] = 4
 @dataclass
 class InvokeNative(Node):
     name: str
     local: bool = False
+    @property
+    def _len(self) -> int:
+        return 5 if self.local else 10
 @dataclass
 class Apply(Node):
     func: str
+    _len: typing.ClassVar[int] = 5
 @dataclass
 class ApplyLocal(Node):
     func: str
+    _len: typing.ClassVar[int] = 10
 
 @dataclass
 class Literal(Node):
@@ -97,24 +115,29 @@ class BooleanExpression(Node):
 @dataclass
 class If(Node):
     branches: list
+    _len: typing.ClassVar[int] = 2
 @dataclass
 class BlockExit(Node):
     depth: int = 1
+    _len: typing.ClassVar[int] = 4
 @dataclass
 class Loop(Node):
     body: list
+    _len: typing.ClassVar[int] = 4
 @dataclass 
 class Continue(Node):
-    pass
+    _len: typing.ClassVar[int] = 8
 
 @dataclass
 class Return(Node):
     value: object | None
     noExit: bool = False
+    _len: typing.ClassVar[int] = 6
 
 @dataclass
 class Broadcast(Node):
     message: str
+    _len: typing.ClassVar[int] = 9
 class _Event:
     def __init__(self, listening: str, line: int = 0):
         self.line = line
@@ -1488,7 +1511,7 @@ Error Preview:
         if self.currentnode:
             shifted = len(_linetext_A) - len(_linetext_B)
             adjusted = max(0, min(_col - shifted - 1, len(_linetext_B) - 1))
-            print('~' * adjusted + '^' + '~' * (len(_linetext_B) - adjusted - 1))
+            print('~' * adjusted + '^' * self.currentnode._len  + '~' * (len(_linetext_B) - adjusted - self.currentnode._len))
 
         if Config.SHOW_PYTHON_TRACEBACK:
             traceback.print_exc()
@@ -1969,3 +1992,5 @@ if Config.SUMMARIZE_FUNC_PROFILES:
 
     for name, (minimum, maximum) in list(_function_profiles.items()):
         print(row([name,f"{1000*minimum:.2f}",f"{1000*maximum:.2f}"]))
+
+
