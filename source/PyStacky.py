@@ -29,6 +29,12 @@ class SetVar(Node):
 class SetGlobalVar(Node):
     name: str
     newValue: object
+@dataclass
+class DeleteVar(Node):
+    name: str
+@dataclass
+class DeleteGlobalVar(Node):
+    name: str
 
 @dataclass
 class Pop(Node):
@@ -42,7 +48,6 @@ class PopLocal(Node):
 @dataclass
 class PushLocal(Node):
     value: str | object
-
 @dataclass
 class Function(Node):
     name: str
@@ -597,7 +602,7 @@ KEYWORDS = [
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
     'calllocalnative', 'exit', 'loop', 'import', 
     'apply', 'applylocal', 'return', 'continue',
-    'event', 'broadcast'
+    'event', 'broadcast', 'delete', 'deleteglobal'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -1170,6 +1175,13 @@ Error:
                     if not isinstance(message, Literal) and not isinstance(message.val, str):
                         raise SyntaxError(f"Expected a string for message, got {message}")
                     return Broadcast(message.val, line=tok[3], col=tok[2])
+            elif keywordtok in ['delete', 'deleteglobal']:
+                name = self.parseSingular()
+                if not isinstance(name, Variable):
+                    raise SyntaxError(f"Expected a variable, got {name}")
+                if keywordtok == 'delete':
+                    return DeleteVar(name.name, line=tok[3], col=tok[2])
+                return DeleteGlobalVar(name.name, line=tok[3], col=tok[2])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
@@ -1782,6 +1794,15 @@ Error Preview:
                 'index': 0,
                 'waiting': False
             })             
+        elif isinstance(node, (DeleteVar, DeleteGlobalVar)):
+            if isinstance(node, DeleteVar):
+                variables = GLOBAL_VAR
+            else:
+                variables = LOCAL_VAR_STACK[-1]
+            if node.name in variables:
+                del variables[node.name]
+            else:
+                raise RuntimeError(f"Variable '{node.name}' not found for deletion")
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
