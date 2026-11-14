@@ -274,3 +274,36 @@ class LocalsViewer(_Polled, tk.Toplevel):
         self.stack_panel.set_title(f"Local Stack ({len(stack_lines)})")
         self.stack_panel.show(stack_lines)
         self.vars_panel.show(var_lines)
+class FrameViewer(_Polled, tk.Toplevel):
+    def __init__(self, root, frames, interpreter):
+        super().__init__(root)
+        self.attributes("-topmost", False)
+
+        self.frames = frames
+        self.interpreter = interpreter
+
+        self.title("Stacky - Execution Frames")
+        self.geometry("420x300")
+        self.minsize(300, 250)
+        self.configure(bg="black")
+
+        self.frames_panel = ListPanel(self, "Frames", justify="left")
+        self.frames_panel.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._poll()
+    def _pauseQuietly(self):
+        try:
+            self.after_cancel(self._poll_id)
+        except Exception:
+            pass
+    def refresh(self):
+        frame_lines = []
+        for i, frame in enumerate(reversed(self.frames)):
+            _type = f'{frame['type'].upper()}'
+            frame_lines.append(f"[{i}]: {_type} ({frame.get('scope', 'GLOBAL')} -> {frame.get('return_scope', 'GLOBAL')})")
+        self.frames_panel.set_title(f"Frames ({len(frame_lines)})")
+        self.frames_panel.show(frame_lines)
+    def destroy(self):
+        super().destroy()
+        self._pauseQuietly()
