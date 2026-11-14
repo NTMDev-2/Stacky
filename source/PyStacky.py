@@ -6,7 +6,7 @@ import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from stackview import LocalsViewer, StackViewer
+import stackview
 
 
 @dataclass
@@ -1760,6 +1760,7 @@ Error Preview:
                         'index': 0,
                         'context': context,
                         'scope': self.scope,
+                        'return_scope': self.scope
                     })
                     break
         elif isinstance(node, BlockExit):
@@ -1776,6 +1777,7 @@ Error Preview:
                 'index': 0,
                 'context': context,
                 'scope': self.scope,
+                'return_scope': self.scope
             })
         elif isinstance(node, Return):
             isFunction = False
@@ -1973,8 +1975,9 @@ if Config.DUMP_NATIVES:
     for native in NATIVES:
         print(native)
 
-viewer = StackViewer(STACK, interpreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
-localsviewer = LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, interpreter)
+viewer = stackview.StackViewer(STACK, interpreter, GLOBAL_VAR, Config.EXECUTION_MS_LIMIT)
+localsviewer = stackview.LocalsViewer(viewer, LOCAL_STACK, LOCAL_VAR_STACK, interpreter)
+frameviewer = stackview.FrameViewer(viewer, interpreter.stack_frames, interpreter)
 viewer._mainloop()
 if Config.SUMMARIZE_FUNC_PROFILES:
     print('\nSummarizing all tracked functions...')
