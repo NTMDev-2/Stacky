@@ -134,7 +134,11 @@ class StackViewer(_Polled, tk.Tk):
         button.pack(side=tk.LEFT, fill=tk.X, expand=True)
         return button
     def refresh(self):
-        lines = [f"[{i}]: {value!r}" for i, value in enumerate(reversed(self.stack))]
+        lines = []
+        for i, value in enumerate(reversed(self.stack)):
+            if isinstance(value, self.interpreter._internal_CONVERT_ITERATOR):
+                value = f"<IteratorInstance {value.name}>"
+            lines.append(f"[{i}]: {value!r}")
         self.panel.set_title(f"Global Stack ({len(lines)})")
         self.panel.show(lines)
         var_lines = [f"{name}: {value!r}" for name, value in self.global_vars.items()]
