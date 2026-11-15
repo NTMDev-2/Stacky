@@ -1785,8 +1785,6 @@ Error Preview:
             if node.func != func.name:
                 _info['origination'] = func
             if func._usedAsIterator:
-                # Calling an iterator only creates it. Its local stacks and scope
-                # are set up each time it is resumed (see _resumeIterator).
                 STACK.append(_Iterator(0, _info))
                 return
 
@@ -1873,7 +1871,6 @@ Error Preview:
                 'return_scope': self.scope
             })
         elif isinstance(node, Return):
-            # `return` inside an iterator ends it (like falling off its last line).
             for i in range(len(self.stack_frames) - 1, -1, -1):
                 if self.stack_frames[i]['type'] in ('function', 'broadcast'):
                     if self.stack_frames[i].get('self'):
@@ -2037,7 +2034,6 @@ Error Preview:
                 else:
                     self.finishFrame()
                     if frame['type'] == 'function' and frame.get('self'):
-                        # Ran off the end of an iterator without yielding again.
                         raise StopIteration("Iterator has been exhausted")
 
                 return True
