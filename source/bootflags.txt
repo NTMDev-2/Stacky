@@ -5,3 +5,4 @@
 # Note: it is suggested to use hyphens instead of underscores. 
 
 clear-on-launch = true
+allow-manual-flag-entry = true
