@@ -145,10 +145,6 @@ class Broadcast(Node):
 class Yield(Node):
     valOptional: str | None
     _len: typing.ClassVar[int] = 6
-@dataclass
-class YieldLocal(Node):
-    valOptional: str | None
-    _len: typing.ClassVar[int] = 10
 
 class _Event:
     def __init__(self, listening: str, line: int = 0):
@@ -662,9 +658,9 @@ class Natives:
             except ValueError:
                 raise ValueError("iternext expects an iterator")
         if _iter.isFinished():
-            class Internal_StopIteraction(Exception):
+            class Internal_StopIteration(Exception):
                 pass
-            raise Internal_StopIteraction("Iterator has been exhausted")
+            raise Internal_StopIteration("Iterator has been exhausted")
     
         if isinstance(_iter, (list, tuple, dict)):
             Natives._pushElement(v, next(iter(_iter)))
@@ -685,7 +681,7 @@ KEYWORDS = [
     'calllocalnative', 'exit', 'loop', 'import', 
     'apply', 'applylocal', 'return', 'continue',
     'event', 'broadcast', 'delete', 'deleteglobal',
-    'yield', 'yieldlocal', 'iterator'
+    'yield', 'iterator'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -1588,7 +1584,7 @@ Error Preview:
 
         if Config.SHOW_PYTHON_TRACEBACK:
             traceback.print_exc()
-    
+
     def evaluate(self, node: type[Node], context: dict[str, object] = {}):
         if Config.DEBUG:
             global step_counter
@@ -1925,7 +1921,7 @@ Error Preview:
                 del variables[node.name]
             else:
                 raise RuntimeError(f"Variable '{node.name}' not found for deletion")
-        elif isinstance(node, (Yield, YieldLocal)):
+        elif isinstance(node, Yield):
             try:
                 _currentIter: _Iterator = self.stack_frames[-1].get('self')
             except IndexError:
@@ -1933,25 +1929,32 @@ Error Preview:
 
             if not _currentIter:
                 raise RuntimeError("No iterator found in the current stack frame")
-            if isinstance(node, YieldLocal):
-                _stack = _currentIter.local_stack
-            else:
-                _stack = STACK
+            
             if node.valOptional:
                 _val = self.evaluate(node.valOptional, context)
             else:
-                _val = _stack.pop()
+                _val = _currentIter.local_stack.pop()
             try:
                 self.evaluate(Return(_val, _usedAsGeneratorExit=True), context)
             except Exception as e:
                 raise RuntimeError(f"A fatal error occurred during evaluation: '{e}'")
+
+        if type(node) in (PushLocal, PopLocal):
+            try:
+                _setIter = self.stack_frames[-1].get('self')
+                if not _setIter:
+                    return
+                print(_setIter, LOCAL_STACK[-1])
+                _setIter.local_stack = LOCAL_STACK[-1]
+            except IndexError:
+                return
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
 
         self.pos += 1
         return self.nodes[self.pos]
-
+    
     def finishFrame(self, depth: int = 1):
         if depth < 1:
             raise ValueError("Exit depth must be at least 1")
@@ -1990,6 +1993,11 @@ Error Preview:
         if self.stack_frames:
             frame = self.stack_frames[-1]
 
+            if frame['type'] == 'function' and frame.get('self'):
+                _iter = frame.get('self')
+                if _iter:
+                    _iter.index += 1
+
             if frame['type'] == 'broadcast':
                 if frame['waiting']:
                     return True
@@ -2007,7 +2015,6 @@ Error Preview:
                 frame['waiting'] = False
                 frame['index'] += 1
                 return True
-
             if frame["index"] >= len(frame["body"]):
                 if frame['type'] == 'loop':
                     frame['index'] = 0
