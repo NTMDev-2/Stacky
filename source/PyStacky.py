@@ -134,17 +134,15 @@ class Return(Node):
     value: object | None
     noExit: bool = False
     _len: typing.ClassVar[int] = 6
-    _usedAsGeneratorExit: bool = False
 
 @dataclass
 class Broadcast(Node):
     message: str
     _len: typing.ClassVar[int] = 9
-
 @dataclass
 class Yield(Node):
     valOptional: str | None
-    _len: typing.ClassVar[int] = 6
+    _len: typing.ClassVar[int] = 5
 
 class _Event:
     def __init__(self, listening: str, line: int = 0):
@@ -162,22 +160,32 @@ class _Event:
         return Call(line=self.line, func=self._handler.name, args=[], _usedAsEvent=True)
 class _Iterator:
     def __init__(self, index: int, frame):
-        self.index = index
         self.frame = frame
+        self.frame['index'] = index
+        self.frame['self'] = self
 
         self.local_stack: list = []
         self.local_var_stack: dict = {}
+        self.suspended: list[dict] = []
+        self.initial_context: dict = dict(frame.get('context', {}))
 
-        self.frame['index'] = self.index
-        self.frame['self'] = self
-        
         self.name = self.frame.get('scope', '<iterator>')
+
+    @property
+    def index(self) -> int:
+        return self.frame['index']
+    @index.setter
+    def index(self, value: int):
+        self.frame['index'] = value
+
     def isFinished(self) -> bool:
-        return self.index >= len(self.frame['body'])
-    def next(self) -> dict:
-        self.index += 1
-        self.frame['index'] = self.index
-        return self.frame
+        return not self.suspended and self.index >= len(self.frame['body'])
+    def reset(self):
+        self.index = 0
+        self.local_stack = []
+        self.local_var_stack = {}
+        self.suspended = []
+        self.frame['context'] = dict(self.initial_context)
 
 class Program:
     def __init__(self, evaluator: 'Evaluator'):
@@ -647,26 +655,22 @@ class Natives:
         _iter = Natives._pop(v)
         if not isinstance(_iter, _Iterator):
             raise TypeError("genrestart expects an iterator")
-        _iter.index = -1
+        if any(f is _iter.frame for f in v.stack_frames):
+            raise RuntimeError("Cannot restart an iterator while it is running")
+        _iter.reset()
         Natives._pushElement(v, _iter)
     @staticmethod
     def gennext(v):
         _iter = Natives._pop(v)
         if not isinstance(_iter, _Iterator):
-            try:
-                _iter = Natives._toPyIter(_iter)
-            except ValueError:
-                raise ValueError("iternext expects an iterator")
+            raise TypeError("gennext expects an iterator")
+        if any(f is _iter.frame for f in v.stack_frames):
+            raise RuntimeError("Iterator is already running")
         if _iter.isFinished():
-            class Internal_StopIteration(Exception):
-                pass
-            raise Internal_StopIteration("Iterator has been exhausted")
-    
-        if isinstance(_iter, (list, tuple, dict)):
-            Natives._pushElement(v, next(iter(_iter)))
-        else:
-            v._pushStackFrame(_iter.next())
-            Natives._pushElement(v, _iter)
+            raise StopIteration("Iterator has been exhausted")
+
+        Natives._pushElement(v, _iter)
+        v._resumeIterator(_iter)
 
 NATIVES = {
     name: getattr(Natives, name)
@@ -1264,14 +1268,12 @@ Error:
                 if keywordtok == 'delete':
                     return DeleteVar(name.name, line=tok[3], col=tok[2])
                 return DeleteGlobalVar(name.name, line=tok[3], col=tok[2])
-            elif keywordtok in ['yield', 'yieldlocal']:
+            elif keywordtok == 'yield':
                 if not self.peek() or self.peek()[0] == 'NEWLINE':
                     val = None
                 else:
                     val = self.parseSingular()
 
-                if keywordtok == 'yieldlocal':
-                    return YieldLocal(valOptional=val, line=tok[3], col=tok[2])
                 return Yield(valOptional=val, line=tok[3], col=tok[2])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
@@ -1539,6 +1541,17 @@ class Interpreter:
         if Config.DEBUG_SCOPE:
             print(f"Pushing stack frame: {info['scope']}, {info['type']}, {info['context']}, {info.get('return_scope', None)}")
         self.stack_frames.append(info)
+    def _resumeIterator(self, _iter: '_Iterator'):
+        frame = _iter.frame
+        frame['return_scope'] = self.scope
+        LOCAL_STACK.append(_iter.local_stack)
+        LOCAL_VAR_STACK.append(_iter.local_var_stack)
+        self.scopes_stack.append(_iter.name)
+        self.scope = _iter.name
+        self._pushStackFrame(frame)
+        for nested in _iter.suspended:
+            self._pushStackFrame(nested)
+        _iter.suspended = []
     def _requestTraceback(self, exc: Exception):
         print('\nTraceback, most recent call last: ')
         module_trace = []
@@ -1742,14 +1755,6 @@ Error Preview:
                 if arg_name not in args_as_dict:
                     args_as_dict[arg_name] = self.evaluate(default_value, context)
 
-            LOCAL_VAR_STACK.append({})
-            LOCAL_STACK.append([])
-
-            if node._usedAsEvent:
-                self.scopes_stack.append(f'<EventInstance {node.func}>')
-            else:
-                self.scopes_stack.append(node.func)
-
             if len(args_as_dict) != len(func.args):
                 raise TypeError(f"Function '{node.func}' takes {len(func.args)} argument{'' if len(func.args) == 1 else 's'} but {len(args_as_dict)} were given")
 
@@ -1765,7 +1770,7 @@ Error Preview:
                 raise RuntimeError(
                     f"Maximum recursion depth ({Config.MAX_RECURSION_DEPTH}) exceeded"
                 )
-            if Config.PROFILE_FUNCTIONS:
+            if Config.PROFILE_FUNCTIONS and not func._usedAsIterator:
                 global FUNCTION_PROF_START
                 FUNCTION_PROF_START = time.time()
 
@@ -1780,12 +1785,18 @@ Error Preview:
             if node.func != func.name:
                 _info['origination'] = func
             if func._usedAsIterator:
-                _iter = _Iterator(-1, _info)
-                _iter.local_stack = LOCAL_STACK[-1]
-                _iter.local_var_stack = LOCAL_VAR_STACK[-1]
-                STACK.append(_iter)
+                # Calling an iterator only creates it. Its local stacks and scope
+                # are set up each time it is resumed (see _resumeIterator).
+                STACK.append(_Iterator(0, _info))
+                return
+
+            LOCAL_VAR_STACK.append({})
+            LOCAL_STACK.append([])
+            if node._usedAsEvent:
+                self.scopes_stack.append(f'<EventInstance {node.func}>')
             else:
-                self._pushStackFrame(_info)
+                self.scopes_stack.append(node.func)
+            self._pushStackFrame(_info)
 
             self.scope = node.func
         elif isinstance(node, InvokeNative):
@@ -1862,35 +1873,37 @@ Error Preview:
                 'return_scope': self.scope
             })
         elif isinstance(node, Return):
-            isFunction = False
-            if node._usedAsGeneratorExit: # Can return to global stack
-                _search = self.stack_frames.copy()
-                _s = 1
-            else:
-                _search = self.stack_frames[:-1].copy()
-                _s = 0
+            # `return` inside an iterator ends it (like falling off its last line).
+            for i in range(len(self.stack_frames) - 1, -1, -1):
+                if self.stack_frames[i]['type'] in ('function', 'broadcast'):
+                    if self.stack_frames[i].get('self'):
+                        _iter: _Iterator = self.stack_frames[i]['self']
+                        del self.stack_frames[i + 1:]
+                        _iter.index = len(_iter.frame['body'])
+                        self.finishFrame(1)
+                        raise StopIteration("Iterator has been exhausted")
+                    break
 
-            for n, frame in enumerate(reversed(_search), _s):
+            isFunction = False
+            _search = self.stack_frames[:-1].copy()
+            for n, frame in enumerate(reversed(_search)):
                 if frame['type'] in ('function', 'broadcast'):
                     isFunction = True
                     returnDepth = n
                     break
             if not isFunction:
                 raise RuntimeError('Return outside a function')
-            
-            if returnDepth == 1 and node._usedAsGeneratorExit: # The only found nested function call was itself, so it must return to GLOBAL.
-                STACK.append(self.evaluate(node.value, context))
-            else:
-                try:
-                    local_stack = LOCAL_STACK[-returnDepth]
-                except IndexError:
-                    raise RuntimeError('No function found to return to')
 
-                local_stack.append(self.evaluate(node.value, context))
-                LOCAL_STACK[-returnDepth] = local_stack
+            try:
+                local_stack = LOCAL_STACK[-returnDepth]
+            except IndexError:
+                raise RuntimeError('No function found to return to')
+
+            local_stack.append(self.evaluate(node.value, context))
+            LOCAL_STACK[-returnDepth] = local_stack
 
             if not self.evaluate(node.noExit, context):
-                self.finishFrame(returnDepth + (0 if _s else 1))
+                self.finishFrame(returnDepth + 1)
         elif isinstance(node, Continue):
             isLoop = False
             for n, frame in enumerate(reversed(self.stack_frames)):
@@ -1922,30 +1935,38 @@ Error Preview:
             else:
                 raise RuntimeError(f"Variable '{node.name}' not found for deletion")
         elif isinstance(node, Yield):
-            try:
-                _currentIter: _Iterator = self.stack_frames[-1].get('self')
-            except IndexError:
-                raise RuntimeError("Yield without an iterator")
+            _idx = None
+            for i in range(len(self.stack_frames) - 1, -1, -1):
+                if self.stack_frames[i]['type'] in ('function', 'broadcast'):
+                    if self.stack_frames[i].get('self'):
+                        _idx = i
+                    break
+            if _idx is None:
+                raise RuntimeError("Yield outside an iterator")
+            _currentIter: _Iterator = self.stack_frames[_idx]['self']
 
-            if not _currentIter:
-                raise RuntimeError("No iterator found in the current stack frame")
-            
-            if node.valOptional:
+            if node.valOptional is not None:
                 _val = self.evaluate(node.valOptional, context)
             else:
-                _val = _currentIter.local_stack.pop()
-            try:
-                self.evaluate(Return(_val, _usedAsGeneratorExit=True), context)
-            except Exception as e:
-                raise RuntimeError(f"A fatal error occurred during evaluation: '{e}'")
+                if not _currentIter.local_stack:
+                    raise RuntimeError("Yield without a value: the local stack is empty")
+                _val = self._toInternalRepr(_currentIter.local_stack.pop())
 
-        if type(node) in (PushLocal, PopLocal):
+            if len(STACK) >= float(Config.MAX_STACK_DEPTH or 'inf'):
+                raise RuntimeError("StackOverflow: maximum stack depth exceeded")
+            STACK.append(_val)
+
+            _currentIter.suspended = self.stack_frames[_idx + 1:]
+            del self.stack_frames[_idx + 1:]
+            self.finishFrame(1)
+
+        if isinstance(node, (PushLocal, PopLocal, DefineVar, SetVar)):
             try:
-                _setIter = self.stack_frames[-1].get('self')
+                _setIter: _Iterator = self.stack_frames[-1].get('self')
                 if not _setIter:
                     return
-                print(_setIter, LOCAL_STACK[-1])
                 _setIter.local_stack = LOCAL_STACK[-1]
+                _setIter.local_var_stack = LOCAL_VAR_STACK[-1]
             except IndexError:
                 return
     def advance(self):
@@ -1993,11 +2014,6 @@ Error Preview:
         if self.stack_frames:
             frame = self.stack_frames[-1]
 
-            if frame['type'] == 'function' and frame.get('self'):
-                _iter = frame.get('self')
-                if _iter:
-                    _iter.index += 1
-
             if frame['type'] == 'broadcast':
                 if frame['waiting']:
                     return True
@@ -2020,11 +2036,13 @@ Error Preview:
                     frame['index'] = 0
                 else:
                     self.finishFrame()
+                    if frame['type'] == 'function' and frame.get('self'):
+                        # Ran off the end of an iterator without yielding again.
+                        raise StopIteration("Iterator has been exhausted")
 
                 return True
 
             node = frame["body"][frame["index"]]
-            self.currentnode = node
             frame["index"] += 1
 
             self.scope = frame["scope"]
@@ -2118,5 +2136,3 @@ if Config.SUMMARIZE_FUNC_PROFILES:
 
     for name, (minimum, maximum) in list(_function_profiles.items()):
         print(row([name,f"{1000*minimum:.2f}",f"{1000*maximum:.2f}"]))
-
-
