@@ -66,6 +66,7 @@ class Function(Node):
     body: list
     _len: typing.ClassVar[int] = 8
     defaults: dict[str, object] = field(default_factory=dict)
+    _usedAsIterator: bool = False
 @dataclass
 class BlockEnd(Node):
     _len: typing.ClassVar[int] = 8
@@ -133,11 +134,22 @@ class Return(Node):
     value: object | None
     noExit: bool = False
     _len: typing.ClassVar[int] = 6
+    _usedAsGeneratorExit: bool = False
 
 @dataclass
 class Broadcast(Node):
     message: str
     _len: typing.ClassVar[int] = 9
+
+@dataclass
+class Yield(Node):
+    valOptional: str | None
+    _len: typing.ClassVar[int] = 6
+@dataclass
+class YieldLocal(Node):
+    valOptional: str | None
+    _len: typing.ClassVar[int] = 10
+
 class _Event:
     def __init__(self, listening: str, line: int = 0):
         self.line = line
@@ -152,6 +164,24 @@ class _Event:
 
     def __call__(self):
         return Call(line=self.line, func=self._handler.name, args=[], _usedAsEvent=True)
+class _Iterator:
+    def __init__(self, index: int, frame):
+        self.index = index
+        self.frame = frame
+
+        self.local_stack: list = []
+        self.local_var_stack: dict = {}
+
+        self.frame['index'] = self.index
+        self.frame['self'] = self
+        
+        self.name = self.frame.get('scope', '<iterator>')
+    def isFinished(self) -> bool:
+        return self.index >= len(self.frame['body'])
+    def next(self) -> dict:
+        self.index += 1
+        self.frame['index'] = self.index
+        return self.frame
 
 class Program:
     def __init__(self, evaluator: 'Evaluator'):
@@ -159,7 +189,6 @@ class Program:
         self.nodes = self.evaluator.parse()
 class Ref(str):
     """A reference inside collections"""
-
 class _CollectionReader:
     NUMBER = re.compile(r'-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?')
     IDENT = re.compile(r'[A-Za-z_]\w*')
@@ -275,6 +304,7 @@ class _CollectionReader:
             return kind(items)
         except TypeError:
             raise self.error('Unhashable map key')
+
 class Natives:
     local = False
        
@@ -283,7 +313,10 @@ class Natives:
         return LOCAL_STACK[-1] if Natives.local else STACK
     @staticmethod
     def _pop(v):
-        return Natives._getStack().pop()
+        try:
+            return Natives._getStack().pop()
+        except IndexError:
+            raise IndexError('Unexpectedly reached end of stack')
     @staticmethod
     def _push(value):
         Natives._getStack().append(value)
@@ -613,6 +646,32 @@ class Natives:
         condition = Natives._pop(v)
         assert condition, message
 
+    @staticmethod
+    def genrestart(v):
+        _iter = Natives._pop(v)
+        if not isinstance(_iter, _Iterator):
+            raise TypeError("genrestart expects an iterator")
+        _iter.index = -1
+        Natives._pushElement(v, _iter)
+    @staticmethod
+    def gennext(v):
+        _iter = Natives._pop(v)
+        if not isinstance(_iter, _Iterator):
+            try:
+                _iter = Natives._toPyIter(_iter)
+            except ValueError:
+                raise ValueError("iternext expects an iterator")
+        if _iter.isFinished():
+            class Internal_StopIteraction(Exception):
+                pass
+            raise Internal_StopIteraction("Iterator has been exhausted")
+    
+        if isinstance(_iter, (list, tuple, dict)):
+            Natives._pushElement(v, next(iter(_iter)))
+        else:
+            v._pushStackFrame(_iter.next())
+            Natives._pushElement(v, _iter)
+
 NATIVES = {
     name: getattr(Natives, name)
     for name in dir(Natives)
@@ -625,7 +684,8 @@ KEYWORDS = [
     'callnative', 'if', 'elif', 'else', 'poplocal', 'pushlocal', 
     'calllocalnative', 'exit', 'loop', 'import', 
     'apply', 'applylocal', 'return', 'continue',
-    'event', 'broadcast', 'delete', 'deleteglobal'
+    'event', 'broadcast', 'delete', 'deleteglobal',
+    'yield', 'yieldlocal', 'iterator'
 ]
 TOKEN_PATTERN = re.compile(
     r'//[^\n]*'
@@ -652,6 +712,7 @@ BASE_DIR = Path(__file__).parent
 
 EVENTS: dict[str, list[_Event]] = {}
 FUNCTIONS: dict[str, Function] = {}
+
 IMPORTING_FILES: set[Path] = set()
 IMPORTED_FILES: set[Path] = set()
 
@@ -678,7 +739,7 @@ class Evaluator:
         self.col = 1
 
         self.package = package
-        self.tokens: list[tuple[str, str]] = []
+        self.tokens: list[tuple[str, str, int, int]] = []
         try:
             self._lexSource()
         except Exception as e:
@@ -833,7 +894,7 @@ Error:
                 number = float(value) if "." in value else int(value)
                 tokens.append(("NUMBER", number, self.col, self.line))
             elif value in KEYWORDS:
-                if value == 'function':
+                if value in ['function', 'iterator']:
                     context = 'funcdef'
                 elif value == 'if':
                     context = 'ifdef'
@@ -1067,7 +1128,9 @@ Error:
                 if keywordtok == 'apply':
                     return Apply(func, line=tok[3], col=tok[2])
                 return ApplyLocal(func, line=tok[3], col=tok[2])
-            elif keywordtok == 'function':
+            elif keywordtok in ['function', 'iterator']:
+                isIterator = (keywordtok == 'iterator')
+
                 if Config.NO_FUNCTIONS:
                     raise RuntimeError("Function definitions are disabled by bootflag")
 
@@ -1107,7 +1170,7 @@ Error:
                     raise SyntaxError(f"Function '{name}' is missing 'end'")
 
                 self.advance()
-                func = Function(name, args, body, defaults=defaults, line=tok[3], col=tok[2])
+                func = Function(name, args, body, defaults=defaults, line=tok[3], col=tok[2], _usedAsIterator=isIterator)
                 FUNCTIONS[name] = func
                 if self.package:
                     _function_origination[name] = self.package
@@ -1205,13 +1268,22 @@ Error:
                 if keywordtok == 'delete':
                     return DeleteVar(name.name, line=tok[3], col=tok[2])
                 return DeleteGlobalVar(name.name, line=tok[3], col=tok[2])
+            elif keywordtok in ['yield', 'yieldlocal']:
+                if not self.peek() or self.peek()[0] == 'NEWLINE':
+                    val = None
+                else:
+                    val = self.parseSingular()
+
+                if keywordtok == 'yieldlocal':
+                    return YieldLocal(valOptional=val, line=tok[3], col=tok[2])
+                return Yield(valOptional=val, line=tok[3], col=tok[2])
             raise SyntaxError(f"Unknown keyword '{keywordtok}'")
         elif tok[0] in ["NUMBER", "STRING", 'OPERATOR', 'BINOP', 'BOOLOP']:
             pass
         else:
             raise SyntaxError(f"Unexpected token: {tok}")
 
-    def peek(self):
+    def peek(self) -> tuple[str, str, int, int] | None:
         if self.pos >= len(self.tokens):
             return None
         return self.tokens[self.pos]
@@ -1399,6 +1471,7 @@ class Interpreter:
         self.currentnode: Node | None = None
 
         self._internal_CONVERT_FUNCTION = Function
+        self._internal_CONVERT_ITERATOR = _Iterator
 
     def getVar(self, name, context=None, precedence='global'):
         if context is None:
@@ -1477,10 +1550,10 @@ class Interpreter:
         for i in list(reversed(self.stack_frames)):
             if i['type'] in ['function', 'broadcast']:
                 _origin = _function_origination.get(i['scope'], '<self>')
-                print(f"In {i['type']} \'{i['scope']}\'{f' (originating from {i['origination'].name})' if 'origination' in i else ''}, of module {_origin}")
+                print(f'In {i['type']} \'{i['scope']}\'{f' (originating from \'{i['origination'].name}\')' if 'origination' in i else ''}, of module {_origin}')
                 function_trace.append(i['scope'])
                 module_trace.append(_origin)
-        _line = getattr(exc, '_psLine', None) or (int(self.currentnode.line) if hasattr(self, 'currentnode') else -1)
+        _line = getattr(exc, '_psLine', None) or (int(self.currentnode.line if hasattr(self.currentnode, 'line') else -1) if hasattr(self, 'currentnode') else -1)
         _col = getattr(exc, '_psCol', None) or (self.currentnode.col if self.currentnode else 0)
         if not module_trace:
             print('[The error was not detected in any function]')
@@ -1491,7 +1564,7 @@ class Interpreter:
 Exception in [module {module_trace[-1]} at {function_trace[-1]}]:
 [{type(exc).__name__}] {exc.__str__()}\n
 Line: {_line}
-Node: {self.currentnode}
+Node: {'<primitive>' if isinstance(self.currentnode, primitive) else self.currentnode}
 
 Error Preview:
 """)
@@ -1516,7 +1589,7 @@ Error Preview:
         if Config.SHOW_PYTHON_TRACEBACK:
             traceback.print_exc()
     
-    def evaluate(self, node, context: dict[str, object] = {}):
+    def evaluate(self, node: type[Node], context: dict[str, object] = {}):
         if Config.DEBUG:
             global step_counter
             step_counter += 1
@@ -1550,7 +1623,11 @@ Error Preview:
 
             if node.name in variables or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
-            variables[node.name] = self.evaluate(node.value, context)
+
+            _val = self.evaluate(node.value, context)
+            if isinstance(_val, Function):
+                _val = f'<FunctionInstance {_val.name}>'
+            variables[node.name] = _val
         elif isinstance(node, DefineGlobalVar):
             if node.name in GLOBAL_VAR or node.name in FUNCTIONS:
                 raise NameError(f"Variable '{node.name}' already exists")
@@ -1648,13 +1725,16 @@ Error Preview:
             try:
                 func = FUNCTIONS[node.func]
             except KeyError:
+                _potentialValue = self.getVar(node.func, context)
                 if node._usedAsEvent:
                     if node.func in EVENTS:
                         func = EVENTS[node.func][self.stack_frames[-1]['index']].handler
                     else:
                         raise TypeError(f"Event listener '{node.func}' is not defined")
-                elif isinstance(self.getVar(node.func, context), Function):
-                    func = self.getVar(node.func, context)
+                elif isinstance(_potentialValue, Function):
+                    func = _potentialValue
+                elif isinstance(_potentialValue, str) and _potentialValue.startswith('<FunctionInstance'):
+                    func = self._toInternalRepr(_potentialValue)
                 else:
                     raise TypeError(f"Function '{node.func}' is not defined")
             previous_scope = self.scope
@@ -1703,7 +1783,13 @@ Error Preview:
             }
             if node.func != func.name:
                 _info['origination'] = func
-            self._pushStackFrame(_info)
+            if func._usedAsIterator:
+                _iter = _Iterator(-1, _info)
+                _iter.local_stack = LOCAL_STACK[-1]
+                _iter.local_var_stack = LOCAL_VAR_STACK[-1]
+                STACK.append(_iter)
+            else:
+                self._pushStackFrame(_info)
 
             self.scope = node.func
         elif isinstance(node, InvokeNative):
@@ -1781,23 +1867,34 @@ Error Preview:
             })
         elif isinstance(node, Return):
             isFunction = False
-            for n, frame in enumerate(reversed(self.stack_frames[:-1])):
+            if node._usedAsGeneratorExit: # Can return to global stack
+                _search = self.stack_frames.copy()
+                _s = 1
+            else:
+                _search = self.stack_frames[:-1].copy()
+                _s = 0
+
+            for n, frame in enumerate(reversed(_search), _s):
                 if frame['type'] in ('function', 'broadcast'):
                     isFunction = True
                     returnDepth = n
                     break
             if not isFunction:
                 raise RuntimeError('Return outside a function')
+            
+            if returnDepth == 1 and node._usedAsGeneratorExit: # The only found nested function call was itself, so it must return to GLOBAL.
+                STACK.append(self.evaluate(node.value, context))
+            else:
+                try:
+                    local_stack = LOCAL_STACK[-returnDepth]
+                except IndexError:
+                    raise RuntimeError('No function found to return to')
 
-            try:
-                local_stack = LOCAL_STACK[-returnDepth]
-            except IndexError:
-                raise RuntimeError('No function found to return to')
-            local_stack.append(self.evaluate(node.value, context))
-            LOCAL_STACK[-returnDepth] = local_stack
+                local_stack.append(self.evaluate(node.value, context))
+                LOCAL_STACK[-returnDepth] = local_stack
 
             if not self.evaluate(node.noExit, context):
-                self.finishFrame(returnDepth+1)
+                self.finishFrame(returnDepth + (0 if _s else 1))
         elif isinstance(node, Continue):
             isLoop = False
             for n, frame in enumerate(reversed(self.stack_frames)):
@@ -1828,6 +1925,26 @@ Error Preview:
                 del variables[node.name]
             else:
                 raise RuntimeError(f"Variable '{node.name}' not found for deletion")
+        elif isinstance(node, (Yield, YieldLocal)):
+            try:
+                _currentIter: _Iterator = self.stack_frames[-1].get('self')
+            except IndexError:
+                raise RuntimeError("Yield without an iterator")
+
+            if not _currentIter:
+                raise RuntimeError("No iterator found in the current stack frame")
+            if isinstance(node, YieldLocal):
+                _stack = _currentIter.local_stack
+            else:
+                _stack = STACK
+            if node.valOptional:
+                _val = self.evaluate(node.valOptional, context)
+            else:
+                _val = _stack.pop()
+            try:
+                self.evaluate(Return(_val, _usedAsGeneratorExit=True), context)
+            except Exception as e:
+                raise RuntimeError(f"A fatal error occurred during evaluation: '{e}'")
     def advance(self):
         if self.pos + 1 >= len(self.nodes):
             return None
@@ -1838,7 +1955,6 @@ Error Preview:
     def finishFrame(self, depth: int = 1):
         if depth < 1:
             raise ValueError("Exit depth must be at least 1")
-
         for _ in range(depth):
             try:
                 frame = self.stack_frames.pop()
