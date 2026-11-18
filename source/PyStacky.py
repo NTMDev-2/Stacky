@@ -1682,28 +1682,40 @@ Error Preview:
             LOCAL_STACK[-1].append(val)
         elif isinstance(node, Pop):
             if node.varOptional is not None:
-                if node.varOptional in context:
-                    context[node.varOptional] = self._toInternalRepr(STACK.pop())
-                elif self.scope != 'GLOBAL' and node.varOptional in LOCAL_VAR_STACK[-1]:
-                    LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(STACK.pop())
-                elif node.varOptional in GLOBAL_VAR:
-                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(STACK.pop())
-                else:
-                    raise NameError(f"Variable '{node.varOptional}' is not defined")
+                try:
+                    if node.varOptional in context:
+                        context[node.varOptional] = self._toInternalRepr(STACK.pop())
+                    elif self.scope != 'GLOBAL' and node.varOptional in LOCAL_VAR_STACK[-1]:
+                        LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(STACK.pop())
+                    elif node.varOptional in GLOBAL_VAR:
+                        GLOBAL_VAR[node.varOptional] = self._toInternalRepr(STACK.pop())
+                    else:
+                        raise NameError(f"Variable '{node.varOptional}' is not defined")
+                except IndexError:
+                    raise IndexError('Unexpectedly reached end of stack')
             else:
-                return self._toInternalRepr(STACK.pop())
+                try:
+                    return self._toInternalRepr(STACK.pop())
+                except IndexError:
+                    raise IndexError('Unexpectedly reached end of stack')
         elif isinstance(node, PopLocal):
             if self.scope == 'GLOBAL':
                 raise RuntimeError('PopLocal without a scope')
             if node.varOptional is not None:
-                if node.varOptional in context:
-                    context[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
-                elif node.varOptional in LOCAL_VAR_STACK[-1]:
-                    LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
-                elif node.varOptional in GLOBAL_VAR:
-                    GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+                try:
+                    if node.varOptional in context:
+                        context[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+                    elif node.varOptional in LOCAL_VAR_STACK[-1]:
+                        LOCAL_VAR_STACK[-1][node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+                    elif node.varOptional in GLOBAL_VAR:
+                        GLOBAL_VAR[node.varOptional] = self._toInternalRepr(LOCAL_STACK[-1].pop())
+                except IndexError:
+                    raise IndexError('Unexpectedly reached end of stack')
             else:
-                return self._toInternalRepr(LOCAL_STACK[-1].pop())
+                try:
+                    return self._toInternalRepr(LOCAL_STACK[-1].pop())
+                except IndexError:
+                    raise IndexError('Unexpectedly reached end of stack')
         elif isinstance(node, (Apply, ApplyLocal)):
             if isinstance(node, ApplyLocal):
                 raw_args = LOCAL_STACK[-1].pop()
